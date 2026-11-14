@@ -76,9 +76,29 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 #pragma mark - Control
 
 - (void)start {
+    NSInteger maxTokens = [self maxTokens];
     NSMutableDictionary *payload = [@{ @"model": self.model ?: @"",
-                                       @"max_tokens": @([self maxTokens]),
+                                       @"max_tokens": @(maxTokens),
                                        @"messages": [ClaudeStream messagesFromTurns:self.turns] } mutableCopy];
+    // Extended thinking is sent only to Claude model families that support it.
+    NSString *lowerModel = self.model.lowercaseString;
+    BOOL supportsThinking = [lowerModel containsString:@"claude-3-7"] ||
+                            [lowerModel containsString:@"claude-sonnet-4"] ||
+                            [lowerModel containsString:@"claude-opus-4"];
+    if (supportsThinking) {
+        AIReasoningLevel level = [AppSettings reasoningLevel];
+        NSInteger requestedBudget = 4096;
+        switch (level) {
+            case AIReasoningLevelLow: requestedBudget = 1024; break;
+            case AIReasoningLevelMedium: requestedBudget = 4096; break;
+            case AIReasoningLevelHigh: requestedBudget = 8192; break;
+            case AIReasoningLevelVeryHigh: requestedBudget = 16384; break;
+            case AIReasoningLevelMax: requestedBudget = 24576; break;
+        }
+        NSInteger budget = MIN(requestedBudget, MAX(1024, maxTokens - 1024));
+        payload[@"max_tokens"] = @(MAX(maxTokens, budget + 1024));
+        payload[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": @(budget) };
+    }
     if (self.useStreaming) payload[@"stream"] = @YES;
     if (self.system.length > 0) payload[@"system"] = self.system;
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
