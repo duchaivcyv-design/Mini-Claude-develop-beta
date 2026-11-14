@@ -58,8 +58,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x build.sh
-          ./build.sh
+          chmod +x .github/scripts/build.sh
+          ./.github/scripts/build.sh
           shopt -s nullglob
           ipa_files=(dist/*.ipa)
           if (( ${#ipa_files[@]} == 0 )); then
