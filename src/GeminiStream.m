@@ -73,6 +73,20 @@
     // Older cached model lists may not include token metadata yet; stay conservative until the list refreshes.
     outputTokens = modelCap > 0 ? MIN(outputTokens, modelCap) : MIN(outputTokens, 8192);
     NSMutableDictionary *generationConfig = [@{ @"maxOutputTokens": @(outputTokens) } mutableCopy];
+    // Gemini 2.5+ supports thinkingBudget. Older models receive no unsupported field.
+    NSString *lowerModel = self.model.lowercaseString;
+    if ([lowerModel containsString:@"2.5"]) {
+        AIReasoningLevel level = [AppSettings reasoningLevel];
+        NSInteger thinkingBudget = 8192;
+        switch (level) {
+            case AIReasoningLevelLow: thinkingBudget = 1024; break;
+            case AIReasoningLevelMedium: thinkingBudget = 4096; break;
+            case AIReasoningLevelHigh: thinkingBudget = 8192; break;
+            case AIReasoningLevelVeryHigh: thinkingBudget = 16384; break;
+            case AIReasoningLevelMax: thinkingBudget = 24576; break;
+        }
+        generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
+    }
     // Gemini image-generation models require both text and image response modalities.
     if ([self.model.lowercaseString rangeOfString:@"image"].location != NSNotFound) {
         generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
