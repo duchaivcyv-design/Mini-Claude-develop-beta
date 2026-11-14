@@ -58,8 +58,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x .github/scripts/build.sh
-          ./.github/scripts/build.sh
+          chmod +x build.sh
+          ./build.sh
           shopt -s nullglob
           ipa_files=(dist/*.ipa)
           if (( ${#ipa_files[@]} == 0 )); then
@@ -73,7 +73,7 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mini-claude-develop-beta-ipa
+          name: Claude-mini-ipa
           path: dist/*.ipa
           if-no-files-found: error
           retention-days: 14
