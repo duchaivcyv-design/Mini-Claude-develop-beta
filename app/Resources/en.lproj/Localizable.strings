@@ -82,7 +82,7 @@
 "system_prompt_title" = "Instructions for the AI";
 "system_prompt_set" = "Set";
 "system_prompt_unset" = "Not set";
-"system_prompt_hint" = "This text is sent with every message to guide how the AI answers. Up to 100,000 characters; long instructions use more context.";
+"system_prompt_hint" = "This text is sent with every message to guide how the AI answers. Up to 1,000,000 characters; long instructions use more context.";
 "system_prompt_placeholder" = "Example: Explain step by step with simple examples and answer in English.";
 "done" = "Done";
 "language" = "Language";
@@ -95,7 +95,7 @@
 "err_no_key_for_provider" = "There is no %@ API key yet. Add one in History › Settings, or choose another model.";
 "reply_truncated" = "*(The reply was cut off because it reached the length limit.)*";
 "chat_prompt_title" = "Instructions for this chat";
-"chat_prompt_hint" = "These instructions apply only to the current chat and replace the general ones from Settings. Up to 100,000 characters. Leave empty to use the general ones.";
+"chat_prompt_hint" = "These instructions apply only to the current chat and replace the general ones from Settings. Up to 1,000,000 characters. Leave empty to use the general ones.";
 "chat_prompt_default" = "Using the general ones";
 "attach_memory_title" = "Photos, PDFs and videos already sent";
 "attach_memory_1" = "Only the latest message";
