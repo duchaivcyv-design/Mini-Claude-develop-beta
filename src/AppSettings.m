@@ -1,10 +1,11 @@
 #import "AppSettings.h"
 
-const NSUInteger kMaxSystemPromptChars = 100000;
+const NSUInteger kMaxSystemPromptChars = 1000000;
 static NSString *const kSystemPromptKey = @"systemPrompt";
 static NSString *const kAttachmentMemoryKey = @"attachmentMemory";
 static NSString *const kMaxOutputTokensKey = @"maxOutputTokens";
 static NSString *const kContextLimitCharsKey = @"contextLimitChars";
+static NSString *const kReasoningLevelKey = @"reasoningLevel";
 
 @implementation AppSettings
 
@@ -64,6 +65,17 @@ static NSString *const kContextLimitCharsKey = @"contextLimitChars";
 + (void)setContextLimitChars:(NSUInteger)count {
     if (count != 200000 && count != 400000 && count != 600000) count = 400000;
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (AIReasoningLevel)reasoningLevel {
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kReasoningLevelKey];
+    return (value >= AIReasoningLevelLow && value <= AIReasoningLevelMax) ? (AIReasoningLevel)value : AIReasoningLevelMedium;
+}
+
++ (void)setReasoningLevel:(AIReasoningLevel)level {
+    if (level < AIReasoningLevelLow || level > AIReasoningLevelMax) level = AIReasoningLevelMedium;
+    [[NSUserDefaults standardUserDefaults] setInteger:level forKey:kReasoningLevelKey];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
