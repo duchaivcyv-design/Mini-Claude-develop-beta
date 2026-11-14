@@ -73,7 +73,7 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GestaltX-ipa
+          name: Mini-claude-develop-beta-ipa
           path: dist/*.ipa
           if-no-files-found: error
           retention-days: 14
