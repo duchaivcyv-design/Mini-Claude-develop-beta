@@ -2,6 +2,14 @@
 
 extern const NSUInteger kMaxSystemPromptChars;
 
+typedef NS_ENUM(NSInteger, AIReasoningLevel) {
+    AIReasoningLevelLow = 0,
+    AIReasoningLevelMedium,
+    AIReasoningLevelHigh,
+    AIReasoningLevelVeryHigh,
+    AIReasoningLevelMax
+};
+
 // Small app-wide preferences.
 @interface AppSettings : NSObject
 
@@ -21,5 +29,9 @@ extern const NSUInteger kMaxSystemPromptChars;
 // Maximum text retained from the conversation when building a request (characters).
 + (NSUInteger)contextLimitChars;
 + (void)setContextLimitChars:(NSUInteger)count;
+
+// Requested reasoning intensity. Providers/models may support only a subset.
++ (AIReasoningLevel)reasoningLevel;
++ (void)setReasoningLevel:(AIReasoningLevel)level;
 
 @end
