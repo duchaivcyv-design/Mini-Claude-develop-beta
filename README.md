@@ -15,16 +15,31 @@ App chat Gemini và Claude cho iPhone iOS 12 đã jailbreak (arm64), giao diện
 - **Báo lỗi mạng cụ thể.** Thẻ lỗi giờ có dòng "Chi tiết" ghi lý do thật (ví dụ hết thời gian chờ, mất kết nối, lỗi TLS) kèm mã lỗi, thay vì chỉ một câu chung chung.
 
 ## Mới ở 0.7.0: sửa tin cũ, tăng giới hạn, video, tạo ảnh và xuất tệp
-- **Sửa tin nhắn cũ:** dưới tin nhắn của bạn có Sao chép và Sửa. Khi chọn Sửa, nội dung cùng tệp đính kèm của tin đó được đưa lại vào ô nhập. Các tin nhắn phía sau bị xóa khỏi nhánh hiện tại; hãy gửi lại để tạo tiếp cuộc trò chuyện.
-- **Giới hạn chỉ dẫn AI lên 100.000 ký tự** cho chỉ dẫn chung và chỉ dẫn riêng từng cuộc trò chuyện. Đây là số ký tự lưu trong app, không phải cam kết model sẽ tiếp nhận toàn bộ; khi gửi, phần chỉ dẫn/lịch sử được cắt theo context mà API công bố.
-- **Token đầu ra:** chọn 2.048 / 4.096 / 8.192 / 16.384 / 32.768 / 65.536 / 128.000. App đọc giới hạn model do API công bố và tự hạ mức yêu cầu về ngưỡng model hỗ trợ. Model cũ hoặc danh sách model chưa cập nhật có thể dùng ngưỡng dự phòng thấp hơn.
-- **Lịch sử gửi cho AI:** chọn 200.000 / 400.000 / 600.000 ký tự. App ưu tiên giữ tin mới và bỏ các lượt cũ nhất khi vượt giới hạn; nếu API công bố context nhỏ hơn, app dùng ngưỡng bảo thủ hơn. Con số ký tự không phải số token.
-- **Video MOV/MP4:** chọn tệp video tối đa 100 MB và 120 giây. App trích tối đa 6 khung hình đại diện rồi gửi chúng như ảnh cho Gemini/Claude. Video không gửi âm thanh và AI không nhận được toàn bộ từng khung hình chuyển động.
-- **Tạo ảnh:** chọn một model Gemini có tên chứa `image` trong danh sách model rồi yêu cầu tạo ảnh. App bật đầu ra TEXT + IMAGE, lưu ảnh trả về vào cuộc trò chuyện và cho phép chia sẻ ảnh. Tính năng chỉ hoạt động khi model/key của bạn được Google cấp quyền tạo ảnh.
-- **Xuất nội dung:** nút Lưu dưới câu trả lời cho phép tạo tệp `.txt` hoặc `.docx` và mở bảng chia sẻ của iOS.
-- **Thời gian chờ:** nâng thời gian tài nguyên của kết nối dài lên 60 phút; chế độ stream vẫn có phương án gửi lại một lần dưới dạng yêu cầu thường nếu stream lỗi mạng trước khi nhận nội dung.
+ClaudeMini - requested targeted changes
 
-**Giới hạn hạ tầng:** dự án này là ứng dụng iOS gọi trực tiếp API Gemini/Claude bằng API key của bạn, không có backend/server AI riêng. Vì vậy sửa app không thể tăng CPU/RAM, số máy chủ, quota, tốc độ sinh token hoặc độ ổn định máy chủ Google/Anthropic. Tốc độ thực tế còn phụ thuộc model, mạng, khu vực, key và giới hạn tài khoản. Muốn tăng tài nguyên máy chủ riêng thì phải triển khai backend/cloud riêng, việc đó nằm ngoài mã nguồn ZIP này.
+Replace only these files at the same paths in the repository:
+- src/AppSettings.h
+- src/AppSettings.m
+- src/SettingsViewController.m
+- src/GeminiStream.m
+- src/ClaudeStream.m
+- app/Resources/vi.lproj/Localizable.strings
+- app/Resources/en.lproj/Localizable.strings
+
+Changes:
+- System instruction limit raised from 100,000 to 1,000,000 characters (stored locally and included in provider request; provider context limits still apply).
+- Added persisted reasoning-level setting: Low, Medium, High, Very High, MAX.
+- Gemini thinkingBudget is sent only to Gemini 2.5 models.
+- Claude extended-thinking budget is sent only to Claude 3.7 and Claude Sonnet/Opus 4 model families, with output budget room reserved.
+- Existing output token cap and conversation context settings remain unchanged.
+
+Not implemented by these changes:
+- @ Google app integrations: require OAuth, Google APIs and connector/backend implementation; a menu alone would not grant access.
+- /tạo ảnh command alias: existing image-capable Gemini model path remains; slash-command routing is not added here.
+- 50 million–1 billion tokens/day: this is not a client-side setting the app can grant. Actual quota is set by provider account/project and billing. This source version does not yet meter provider-reported daily token usage, so no fake quota switch was added.
+- MAX ×8 is a UI level label; it cannot force a provider to use 8x compute or exceed model/API limits.
+
+Validation: balanced delimiter sanity checks passed. Full iOS build not run; Xcode/iOS SDK is not available in this environment.
 
 ## Mới ở 0.6.0: file .ipa
 Mỗi lần build, GitHub Actions tạo thêm một artifact thứ hai tên **ClaudeMini-ipa** chứa file IPA theo số phiên bản hiện tại (artifact `ClaudeMini-deb` vẫn có như cũ).
