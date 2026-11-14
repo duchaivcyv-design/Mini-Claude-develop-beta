@@ -6,7 +6,7 @@ extern const NSUInteger kMaxInlineBytesPerMessage;   // raw bytes of images + PD
 
 // Attachments are stored on this device only, in one folder per conversation.
 // An attachment is an NSDictionary:
-//   id, kind ("image" | "pdf" | "text"), name (shown to the user), mime, file (stored file name), thumb (images only), bytes
+//   id, kind ("image" | "pdf" | "text" | "video"), name (shown to the user), mime, file (stored file name), thumb (images only), bytes
 @interface AttachmentStore : NSObject
 
 + (void)deleteDirectoryForConversation:(NSString *)conversationId;

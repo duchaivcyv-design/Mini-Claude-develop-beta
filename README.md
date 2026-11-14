@@ -1,21 +1,33 @@
-# ClaudeMini 0.6.0 — Chat Gemini và Claude, markdown/code/toán, gửi ảnh và tài liệu, tự lên repo
+# ClaudeMini 0.7.0 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
 
-App chat Gemini cho iPhone iOS 12 đã jailbreak (arm64), giao diện kiểu Claude (sáng, tiếng Việt/Anh theo ngôn ngữ máy).
+App chat Gemini và Claude cho iPhone iOS 12 đã jailbreak (arm64), giao diện kiểu Claude (sáng, tiếng Việt/Anh theo ngôn ngữ máy).
 
 ## Bản này làm được gì
 - **Nhập API key của chính bạn** ở lần mở đầu, có nút kiểm tra. Key chỉ nằm trên máy (Keychain, hoặc file quyền 0600 nếu Keychain từ chối). Không có key nào trong code hay trong .deb.
-- **Chat nhiều lượt, chữ chạy dần**, nút **dừng** trong lúc đang trả lời, nút **Sao chép** và **Tạo lại** dưới mỗi câu trả lời, thẻ lỗi có nút **Thử lại**.
-- **Chọn model**: chạm vào tên model ở giữa thanh trên cùng. Danh sách lấy trực tiếp từ Google theo key của bạn (không ghi cứng tên model). Mặc định chọn bản Flash ổn định mới nhất.
+- **Chat nhiều lượt, chữ chạy dần**, nút **dừng** trong lúc đang trả lời, nút **Sao chép / Lưu** dưới câu trả lời. Tin nhắn cũ của bạn có nút **Sao chép / Sửa**; sửa một tin sẽ bỏ các tin phía sau để gửi lại từ vị trí đó.
+- **Chọn model**: chạm vào tên model ở giữa thanh trên cùng. Danh sách lấy trực tiếp từ API của từng nhà cung cấp theo key của bạn (không ghi cứng tên model). Mặc định chọn bản Flash ổn định mới nhất.
 - **Lịch sử** (nút ba gạch bên trái): lưu trên máy, có **tìm kiếm** (theo tiêu đề và nội dung), **vuốt trái để Đổi tên / Xóa**.
-- **Cài đặt** (trong màn Lịch sử): đổi key, xóa toàn bộ lịch sử, xem phiên bản.
+- **Cài đặt** (trong màn Lịch sử): đổi key, đặt chỉ dẫn AI tối đa 100.000 ký tự, giới hạn token đầu ra và độ dài lịch sử gửi cho model, xóa toàn bộ lịch sử, xem phiên bản.
 - Nút **soạn mới** (hình ô vuông có bút) bên phải: cuộc trò chuyện mới.
 
 ## Thay đổi ở 0.2.1
 - **Sửa lỗi chat bị đứng ở dấu chấm chờ.** Nếu kết nối chạy dần (stream) bị lỗi mạng trước khi nhận được chữ nào, app tự gửi lại một lần dưới dạng yêu cầu thường (nhận cả câu trả lời một lúc). Kết nối stream cũng không còn nén dữ liệu để các đoạn chữ không bị giữ lại.
 - **Báo lỗi mạng cụ thể.** Thẻ lỗi giờ có dòng "Chi tiết" ghi lý do thật (ví dụ hết thời gian chờ, mất kết nối, lỗi TLS) kèm mã lỗi, thay vì chỉ một câu chung chung.
 
+## Mới ở 0.7.0: sửa tin cũ, tăng giới hạn, video, tạo ảnh và xuất tệp
+- **Sửa tin nhắn cũ:** dưới tin nhắn của bạn có Sao chép và Sửa. Khi chọn Sửa, nội dung cùng tệp đính kèm của tin đó được đưa lại vào ô nhập. Các tin nhắn phía sau bị xóa khỏi nhánh hiện tại; hãy gửi lại để tạo tiếp cuộc trò chuyện.
+- **Giới hạn chỉ dẫn AI lên 100.000 ký tự** cho chỉ dẫn chung và chỉ dẫn riêng từng cuộc trò chuyện. Đây là số ký tự lưu trong app, không phải cam kết model sẽ tiếp nhận toàn bộ; khi gửi, phần chỉ dẫn/lịch sử được cắt theo context mà API công bố.
+- **Token đầu ra:** chọn 2.048 / 4.096 / 8.192 / 16.384 / 32.768 / 65.536 / 128.000. App đọc giới hạn model do API công bố và tự hạ mức yêu cầu về ngưỡng model hỗ trợ. Model cũ hoặc danh sách model chưa cập nhật có thể dùng ngưỡng dự phòng thấp hơn.
+- **Lịch sử gửi cho AI:** chọn 200.000 / 400.000 / 600.000 ký tự. App ưu tiên giữ tin mới và bỏ các lượt cũ nhất khi vượt giới hạn; nếu API công bố context nhỏ hơn, app dùng ngưỡng bảo thủ hơn. Con số ký tự không phải số token.
+- **Video MOV/MP4:** chọn tệp video tối đa 100 MB và 120 giây. App trích tối đa 6 khung hình đại diện rồi gửi chúng như ảnh cho Gemini/Claude. Video không gửi âm thanh và AI không nhận được toàn bộ từng khung hình chuyển động.
+- **Tạo ảnh:** chọn một model Gemini có tên chứa `image` trong danh sách model rồi yêu cầu tạo ảnh. App bật đầu ra TEXT + IMAGE, lưu ảnh trả về vào cuộc trò chuyện và cho phép chia sẻ ảnh. Tính năng chỉ hoạt động khi model/key của bạn được Google cấp quyền tạo ảnh.
+- **Xuất nội dung:** nút Lưu dưới câu trả lời cho phép tạo tệp `.txt` hoặc `.docx` và mở bảng chia sẻ của iOS.
+- **Thời gian chờ:** nâng thời gian tài nguyên của kết nối dài lên 60 phút; chế độ stream vẫn có phương án gửi lại một lần dưới dạng yêu cầu thường nếu stream lỗi mạng trước khi nhận nội dung.
+
+**Giới hạn hạ tầng:** dự án này là ứng dụng iOS gọi trực tiếp API Gemini/Claude bằng API key của bạn, không có backend/server AI riêng. Vì vậy sửa app không thể tăng CPU/RAM, số máy chủ, quota, tốc độ sinh token hoặc độ ổn định máy chủ Google/Anthropic. Tốc độ thực tế còn phụ thuộc model, mạng, khu vực, key và giới hạn tài khoản. Muốn tăng tài nguyên máy chủ riêng thì phải triển khai backend/cloud riêng, việc đó nằm ngoài mã nguồn ZIP này.
+
 ## Mới ở 0.6.0: file .ipa
-Mỗi lần build, GitHub Actions tạo thêm một artifact thứ hai tên **ClaudeMini-ipa** chứa `ClaudeMini_0.6.0.ipa` (artifact `ClaudeMini-deb` vẫn có như cũ).
+Mỗi lần build, GitHub Actions tạo thêm một artifact thứ hai tên **ClaudeMini-ipa** chứa file IPA theo số phiên bản hiện tại (artifact `ClaudeMini-deb` vẫn có như cũ).
 - **Dành cho máy đã jailbreak có AppSync Unified** (cài từ Sileo). File được ký giả bằng `ldid`, không có chữ ký của Apple, nên máy chưa jailbreak không cài được. Cài bằng Filza (chạm vào file `.ipa` rồi chọn Install) hoặc một công cụ cài IPA khác trên máy jailbreak. Để cài trên máy không jailbreak cần ký lại bằng chữ ký của chính bạn (ví dụ Sideloadly hoặc AltStore); mình chưa kiểm tra chúng có hỗ trợ iOS 12 hay không.
 - **Khác với `.deb`:** bản `.ipa` chạy trong sandbox bình thường như app App Store (không dùng quyền đặc biệt `platform-application` và `no-container` của bản `.deb`). Lịch sử và API key nằm trong thư mục riêng của app. Bản `.deb` thì cài như ứng dụng hệ thống vào `/Applications`.
 - **Đừng cài cả hai cùng lúc:** hai bản trùng bundle id `com.puc.claudemini`. Hãy gỡ bản này trước khi cài bản kia. Dữ liệu của hai bản không dùng chung.
@@ -43,7 +55,7 @@ Sau mỗi lần build, `tools/publish_repo.py` chép `.deb` vào thư mục đó
 - **Giả định bố cục:** tệp `Packages` và `Release` nằm ở thư mục gốc của repo. Nếu repo của bạn để ở chỗ khác, hãy cho mình biết.
 - Lần đầu nên sao lưu repo (tải bản zip) để yên tâm.
 
-**4C. Bớt gửi lại ảnh và PDF.** Cài đặt › Ảnh và PDF đã gửi: **1 tin gần nhất / 3 tin gần nhất (mặc định) / Tất cả**. AI chỉ nhìn thấy ảnh và PDF khi chúng được gửi lại trong từng yêu cầu, nên gửi ít hơn thì tiết kiệm hạn mức, nhưng AI không còn xem được ảnh/PDF cũ hơn (nó thấy một ghi chú thay thế). Chữ trích từ Word, PowerPoint, văn bản luôn được giữ. Mình chưa làm cách tải tệp lên một lần (Files API) vì chưa chắc nó tiết kiệm được hạn mức và cần thử với key thật.
+**4C. Bớt gửi lại ảnh, PDF và khung hình video.** Cài đặt › Ảnh, PDF và video đã gửi: **1 tin gần nhất / 3 tin gần nhất (mặc định) / Tất cả**. AI chỉ nhìn thấy ảnh, khung hình video và PDF khi chúng được gửi lại trong từng yêu cầu, nên gửi ít hơn thì tiết kiệm hạn mức, nhưng AI không còn xem được nội dung media cũ hơn (nó thấy một ghi chú thay thế). Chữ trích từ Word, PowerPoint, văn bản luôn được giữ. Mình chưa làm cách tải tệp lên một lần (Files API) vì chưa chắc nó tiết kiệm được hạn mức và cần thử với key thật.
 
 **4D. Chỉ dẫn riêng cho từng cuộc trò chuyện.** Chạm vào tên model ở giữa thanh trên cùng (màn hình giờ tên là **Model và chỉ dẫn**): dòng đầu tiên là chỉ dẫn riêng cho cuộc trò chuyện đang mở, thay cho chỉ dẫn chung trong Cài đặt. Để trống là dùng chỉ dẫn chung. Lưu cùng cuộc trò chuyện.
 
@@ -56,7 +68,7 @@ Sau mỗi lần build, `tools/publish_repo.py` chép `.deb` vào thư mục đó
 - Mặc định: có key Gemini thì dùng Gemini Flash mới nhất; chỉ có key Claude thì dùng Claude Sonnet mới nhất. Model Haiku rẻ hơn Sonnet.
 - Ảnh và PDF gửi được cho cả hai nhà cung cấp.
 
-**Chỉ dẫn cho AI (system prompt).** Cài đặt › Chỉ dẫn cho AI: một ô tự nhập (tối đa 4.000 ký tự), được gửi kèm mọi tin nhắn, lưu tự động. Áp dụng cho toàn app.
+**Chỉ dẫn cho AI (system prompt).** Cài đặt › Chỉ dẫn cho AI: một ô tự nhập (tối đa 100.000 ký tự), được gửi kèm mọi tin nhắn, lưu tự động. Áp dụng cho toàn app.
 
 **Đổi ngôn ngữ.** Cài đặt › Ngôn ngữ: Tự động / Tiếng Việt / English. Đổi xong app dựng lại màn hình bằng ngôn ngữ mới (cuộc trò chuyện đang mở bắt đầu lại từ đầu).
 
@@ -67,14 +79,15 @@ Nút **+** bên trái ô nhập mở menu: **Chụp ảnh**, **Chọn ảnh từ
 
 | Loại | Cách xử lý |
 |---|---|
-| Ảnh (JPG, PNG, HEIC, GIF…) | Thu nhỏ còn tối đa 2048 px, nén JPEG rồi gửi cho Gemini |
-| PDF (tối đa 10 MB) | Gửi nguyên cho Gemini, đọc được cả bản scan và hình trong PDF |
+| Ảnh (JPG, PNG, HEIC, GIF…) | Thu nhỏ còn tối đa 2048 px, nén JPEG rồi gửi cho Gemini hoặc Claude |
+| PDF (tối đa 10 MB) | Gửi nguyên cho Gemini hoặc Claude, đọc được cả bản scan và hình trong PDF |
+| Video MOV/MP4 (tối đa 100 MB, 120 giây) | Trích tối đa 6 khung hình đại diện, gửi như ảnh; không gửi âm thanh |
 | Word `.docx`, PowerPoint `.pptx` (tối đa 15 MB) | App tự trích chữ trên máy rồi gửi dạng văn bản (không đọc được ảnh/biểu đồ bên trong) |
 | Văn bản, mã nguồn (`.txt`, `.md`, `.csv`, `.json`, `.py`…) | Gửi dạng văn bản (tối đa 4 MB, cắt còn 200.000 ký tự) |
 | `.doc`, `.xls/.xlsx`, `.ppt`, `.pages`, `.rtf`… | Chưa hỗ trợ: hãy xuất sang PDF rồi gửi |
 
-Giới hạn: tối đa 6 tệp mỗi tin nhắn, tổng ảnh và PDF mỗi tin nhắn tối đa 13 MB.
-Lưu ý quan trọng: Gemini không nhớ giữa các lượt, nên ảnh và PDF đã gửi được **gửi lại ở mỗi lượt** trong cùng cuộc trò chuyện (trong giới hạn dung lượng; tệp cũ nhất sẽ bị bỏ trước). Với tài liệu dài, nên bắt đầu cuộc trò chuyện mới khi chuyển sang chủ đề khác để tiết kiệm hạn mức.
+Giới hạn: tối đa 6 tệp mỗi tin nhắn; tổng dữ liệu ảnh, PDF và khung hình video trong một tin nhắn tối đa 13 MB.
+Lưu ý quan trọng: API không tự giữ các tệp media cũ giữa các lượt, nên ảnh, khung hình video và PDF đã gửi được **gửi lại ở mỗi lượt** trong cùng cuộc trò chuyện (trong giới hạn dung lượng; tệp cũ nhất sẽ bị bỏ trước). Với tài liệu dài, nên bắt đầu cuộc trò chuyện mới khi chuyển sang chủ đề khác để tiết kiệm hạn mức.
 Tệp đính kèm lưu trên máy (cùng lịch sử) và bị xóa khi bạn xóa cuộc trò chuyện hoặc toàn bộ lịch sử. Lần đầu dùng camera, iOS sẽ hỏi quyền.
 
 ## Thay đổi ở 0.2.2
@@ -96,7 +109,7 @@ Theo các nguồn tháng 10/2026 (Google không còn công bố hạn mức từ
 ## Cách build (không cần Mac)
 1. Tải **toàn bộ thư mục này** lên repo GitHub (giữ thư mục ẩn `.github`).
 2. Tab **Actions** → **Build ClaudeMini** → **Run workflow**.
-3. Tải artifact `ClaudeMini-deb` (hoặc `ClaudeMini-ipa` nếu bạn muốn file .ipa), lấy file `com.puc.claudemini_0.6.0_iphoneos-arm.deb`.
+3. Tải artifact `ClaudeMini-deb` (hoặc `ClaudeMini-ipa` nếu bạn muốn file .ipa), lấy file `com.puc.claudemini_0.7.0_iphoneos-arm.deb`.
 4. Đưa vào repo Sileo của bạn (hoặc chép vào máy và cài bằng Filza). Số phiên bản lớn hơn bản trước nên Sileo sẽ coi là bản cập nhật.
 
 ## Những gì cần để ý khi chạy thử lần đầu
@@ -119,4 +132,4 @@ Theo các nguồn tháng 10/2026 (Google không còn công bố hạn mức từ
 
 ## Lưu ý
 - Trường `Maintainer` trong `deb/DEBIAN/control` đang là giá trị tạm (`puc`). Hãy sửa theo ý bạn.
-- Lịch sử chỉ lưu trên máy này. Khi chat, nội dung được gửi tới Google Gemini bằng key của bạn.
+- Lịch sử chỉ lưu trên máy này. Khi chat, nội dung được gửi tới nhà cung cấp model đang chọn (Google Gemini hoặc Anthropic Claude) bằng API key của bạn.

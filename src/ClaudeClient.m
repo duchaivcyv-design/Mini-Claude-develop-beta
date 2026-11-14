@@ -93,7 +93,12 @@ static NSMutableURLRequest *ModelsRequest(NSString *key, NSString *afterId) {
             NSString *modelId = item[@"id"];
             if (![modelId isKindOfClass:[NSString class]] || ![modelId hasPrefix:@"claude"]) continue;
             NSString *display = [item[@"display_name"] isKindOfClass:[NSString class]] ? item[@"display_name"] : modelId;
-            [collected addObject:@{ @"id": modelId, @"name": display }];
+            NSMutableDictionary *model = [@{ @"id": modelId, @"name": display } mutableCopy];
+            id maxTokens = item[@"max_tokens"];
+            if ([maxTokens respondsToSelector:@selector(integerValue)] && [maxTokens integerValue] > 0) model[@"max_tokens"] = maxTokens;
+            id maxInputTokens = item[@"max_input_tokens"];
+            if ([maxInputTokens respondsToSelector:@selector(integerValue)] && [maxInputTokens integerValue] > 0) model[@"max_input_tokens"] = maxInputTokens;
+            [collected addObject:model];
         }
 
         BOOL hasMore = [root[@"has_more"] respondsToSelector:@selector(boolValue)] && [root[@"has_more"] boolValue];

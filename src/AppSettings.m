@@ -1,8 +1,10 @@
 #import "AppSettings.h"
 
-const NSUInteger kMaxSystemPromptChars = 4000;
+const NSUInteger kMaxSystemPromptChars = 100000;
 static NSString *const kSystemPromptKey = @"systemPrompt";
 static NSString *const kAttachmentMemoryKey = @"attachmentMemory";
+static NSString *const kMaxOutputTokensKey = @"maxOutputTokens";
+static NSString *const kContextLimitCharsKey = @"contextLimitChars";
 
 @implementation AppSettings
 
@@ -40,6 +42,28 @@ static NSString *const kAttachmentMemoryKey = @"attachmentMemory";
 + (void)setAttachmentMemory:(NSInteger)count {
     if (count != 0 && count != 1 && count != 3) count = 3;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (NSInteger)maxOutputTokens {
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
+    return (value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 8192;
+}
+
++ (void)setMaxOutputTokens:(NSInteger)count {
+    if (count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 8192;
+    [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (NSUInteger)contextLimitChars {
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
+    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
+}
+
++ (void)setContextLimitChars:(NSUInteger)count {
+    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 

@@ -96,6 +96,13 @@
     self.counterLabel.textColor = count > kMaxSystemPromptChars ? [Theme error] : [Theme secondaryText];
 }
 
+- (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
+    NSUInteger current = textView.text.length;
+    NSUInteger removed = MIN(range.length, current);
+    NSUInteger nextLength = current - removed + text.length;
+    return nextLength <= kMaxSystemPromptChars;
+}
+
 - (void)textViewDidChange:(UITextView *)textView {
     self.placeholderLabel.hidden = textView.text.length > 0;
     [self updateCounter];

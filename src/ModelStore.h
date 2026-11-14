@@ -7,6 +7,8 @@
 
 + (NSArray *)cachedModelsForProvider:(AIProvider)provider;          // @[ @{ @"id":..., @"name":... } ]
 + (void)saveModels:(NSArray *)models forProvider:(AIProvider)provider;
++ (NSInteger)maxOutputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider; // 0 if the provider did not report a cap
++ (NSInteger)maxInputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider;   // 0 if the provider did not report a cap
 
 + (NSString *)selectedModelId;                                      // nil if the user never chose one
 + (void)setSelectedModelId:(NSString *)modelId;

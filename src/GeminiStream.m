@@ -1,4 +1,7 @@
 #import "GeminiStream.h"
+#import "AppSettings.h"
+#import "ModelStore.h"
+#import "Provider.h"
 
 @interface GeminiStream () <NSURLSessionDataDelegate>
 @property (copy, nonatomic) NSString *key;
@@ -65,7 +68,17 @@
     NSString *urlString = [NSString stringWithFormat:
         @"https://generativelanguage.googleapis.com/v1beta/models/%@:%@", escapedModel, method];
 
-    NSMutableDictionary *payload = [@{ @"contents": [GeminiStream contentsFromTurns:self.turns] } mutableCopy];
+    NSInteger outputTokens = [AppSettings maxOutputTokens];
+    NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderGemini];
+    // Older cached model lists may not include token metadata yet; stay conservative until the list refreshes.
+    outputTokens = modelCap > 0 ? MIN(outputTokens, modelCap) : MIN(outputTokens, 8192);
+    NSMutableDictionary *generationConfig = [@{ @"maxOutputTokens": @(outputTokens) } mutableCopy];
+    // Gemini image-generation models require both text and image response modalities.
+    if ([self.model.lowercaseString rangeOfString:@"image"].location != NSNotFound) {
+        generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
+    }
+    NSMutableDictionary *payload = [@{ @"contents": [GeminiStream contentsFromTurns:self.turns],
+                                       @"generationConfig": generationConfig } mutableCopy];
     if (self.system.length > 0) payload[@"system_instruction"] = @{ @"parts": @[ @{ @"text": self.system } ] };
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
@@ -86,7 +99,7 @@
 
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
-    config.timeoutIntervalForResource = 600;
+    config.timeoutIntervalForResource = 3600;
     self.session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:[NSOperationQueue mainQueue]];
     self.task = [self.session dataTaskWithRequest:request];
     [self.task resume];
@@ -149,6 +162,7 @@ didReceiveResponse:(NSURLResponse *)response
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
     NSInteger status = self.status;
     self.onDelta = nil;
+    self.onImage = nil;
     self.onFinish = nil;
     if (finish) finish(result, status, detail);
 }
@@ -206,11 +220,21 @@ didReceiveResponse:(NSURLResponse *)response
     NSArray *parts = [content[@"parts"] isKindOfClass:[NSArray class]] ? content[@"parts"] : @[];
     for (id part in parts) {
         if (![part isKindOfClass:[NSDictionary class]]) continue;
-        if ([part[@"thought"] respondsToSelector:@selector(boolValue)] && [part[@"thought"] boolValue]) continue;   // skip thought summaries
+        BOOL isThought = [part[@"thought"] respondsToSelector:@selector(boolValue)] && [part[@"thought"] boolValue];
         NSString *text = part[@"text"];
-        if ([text isKindOfClass:[NSString class]] && text.length > 0) {
+        if (!isThought && [text isKindOfClass:[NSString class]] && text.length > 0) {
             self.gotText = YES;
             if (self.onDelta) self.onDelta(text);
+        }
+        NSDictionary *inlineData = [part[@"inlineData"] isKindOfClass:[NSDictionary class]] ? part[@"inlineData"] : nil;
+        NSString *mime = [inlineData[@"mimeType"] isKindOfClass:[NSString class]] ? inlineData[@"mimeType"] : @"";
+        NSString *encoded = [inlineData[@"data"] isKindOfClass:[NSString class]] ? inlineData[@"data"] : nil;
+        if ([mime hasPrefix:@"image/"] && encoded.length > 0) {
+            NSData *imageData = [[NSData alloc] initWithBase64EncodedString:encoded options:NSDataBase64DecodingIgnoreUnknownCharacters];
+            if (imageData.length > 0) {
+                self.gotText = YES; // A generated image is a successful model response even when no text accompanies it.
+                if (self.onImage) self.onImage(imageData, mime);
+            }
         }
     }
 

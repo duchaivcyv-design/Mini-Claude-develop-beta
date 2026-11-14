@@ -18,7 +18,8 @@ body {
 .row { margin-bottom: 22px; }
 
 /* user message: soft beige bubble on the right */
-.row.user { display: -webkit-flex; display: flex; -webkit-justify-content: flex-end; justify-content: flex-end; }
+.row.user { display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column; -webkit-align-items: flex-end; align-items: flex-end; }
+.row.user .actions { max-width: 88%; text-align: right; }
 .bubble {
   background: #F0EEE6;
   border-radius: 18px;
@@ -76,6 +77,8 @@ body {
 }
 
 /* assistant message: plain serif text, like Claude */
+.assistant-media { margin: 0 0 10px 0; }
+.generated-image { display: block; width: auto; max-width: 100%; max-height: 420px; border-radius: 12px; background: #F0EEE6; object-fit: contain; }
 .row.assistant .body {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 17.5px;

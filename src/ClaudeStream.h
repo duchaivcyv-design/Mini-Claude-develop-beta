@@ -8,6 +8,7 @@
 
 @property (assign, nonatomic) BOOL useStreaming;
 @property (copy, nonatomic) void (^onDelta)(NSString *text);
+@property (copy, nonatomic) void (^onImage)(NSData *data, NSString *mimeType);
 @property (copy, nonatomic) void (^onFinish)(GeminiStreamError error, NSInteger httpStatus, NSString *detail);
 
 - (void)start;

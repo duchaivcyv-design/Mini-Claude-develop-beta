@@ -25,6 +25,36 @@ static NSString *CacheKeyFor(AIProvider provider) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
++ (NSInteger)maxOutputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider {
+    if (modelId.length == 0) return 0;
+    NSString *field = provider == AIProviderClaude ? @"max_tokens" : @"outputTokenLimit";
+    for (NSDictionary *model in [self cachedModelsForProvider:provider]) {
+        if (![model[@"id"] isEqualToString:modelId]) continue;
+        id value = model[field];
+        if ([value respondsToSelector:@selector(integerValue)]) {
+            NSInteger cap = [value integerValue];
+            return cap > 0 ? cap : 0;
+        }
+        return 0;
+    }
+    return 0;
+}
+
++ (NSInteger)maxInputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider {
+    if (modelId.length == 0) return 0;
+    NSString *field = provider == AIProviderClaude ? @"max_input_tokens" : @"inputTokenLimit";
+    for (NSDictionary *model in [self cachedModelsForProvider:provider]) {
+        if (![model[@"id"] isEqualToString:modelId]) continue;
+        id value = model[field];
+        if ([value respondsToSelector:@selector(integerValue)]) {
+            NSInteger cap = [value integerValue];
+            return cap > 0 ? cap : 0;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 + (NSString *)selectedModelId {
     NSString *value = [[NSUserDefaults standardUserDefaults] stringForKey:kSelectedModelKey];
     return value.length > 0 ? value : nil;

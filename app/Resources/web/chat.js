@@ -9,7 +9,10 @@
     copyCode: 'Copy',
     copied: 'Copied',
     regenerate: 'Regenerate',
-    retry: 'Retry'
+    retry: 'Retry',
+    edit: 'Edit',
+    save: 'Save',
+    share: 'Share'
   };
 
   var msgsEl = document.getElementById('messages');
@@ -92,6 +95,9 @@
       post({ type: 'copy', text: row._text || '' });
       toast(S.copied);
     }));
+    box.appendChild(actionButton(S.save, function () {
+      post({ type: 'save', text: row._text || '' });
+    }));
     row.appendChild(box);
   }
 
@@ -124,8 +130,20 @@
     img.addEventListener('click', function () { post({ type: 'image', id: id }); }, false);
   }
 
+  function buildUserActions(row, messageIndex) {
+    var box = el('div', 'actions');
+    box.appendChild(actionButton(S.copy, function () {
+      post({ type: 'copy', text: row._text || '' });
+      toast(S.copied);
+    }));
+    box.appendChild(actionButton(S.edit, function () {
+      post({ type: 'edit', index: messageIndex });
+    }));
+    row.appendChild(box);
+  }
+
   // A user message: optional attachments (photo thumbnails / file chips) above the text.
-  function addUser(text, atts) {
+  function addUser(text, atts, messageIndex) {
     var row = el('div', 'row user');
     var bubble = el('div', 'bubble');
     if (atts && atts.length) {
@@ -150,7 +168,9 @@
     }
     if (text) { bubble.appendChild(el('div', 'btext', text)); }
     row.appendChild(bubble);
+    row._text = text || '';
     msgsEl.appendChild(row);
+    buildUserActions(row, messageIndex);
   }
 
   function renderInto(node, text) {
@@ -158,14 +178,38 @@
     if (!window.MD) { node.textContent = text; }
   }
 
-  function addAssistant(text) {
+  function addAssistant(text, atts) {
     var row = el('div', 'row assistant');
+    var imageId = null;
+    if (atts && atts.length) {
+      var media = el('div', 'assistant-media');
+      for (var i = 0; i < atts.length; i++) {
+        var a = atts[i];
+        if (a.kind === 'image' && a.thumb) {
+          var img = document.createElement('img');
+          img.className = 'generated-image';
+          img.src = a.thumb;
+          img.alt = a.name || 'Generated image';
+          bindImageTap(img, a.id);
+          media.appendChild(img);
+          imageId = a.id;
+        }
+      }
+      if (media.childNodes.length) { row.appendChild(media); }
+    }
     var body = el('div', 'body md');
-    renderInto(body, text);
-    row.appendChild(body);
-    row._text = text;
+    if (text) {
+      renderInto(body, text);
+      row.appendChild(body);
+    }
+    row._text = text || '';
     msgsEl.appendChild(row);
-    buildActions(row);
+    if (text) { buildActions(row); }
+    if (imageId) {
+      var actions = row.querySelector('.actions');
+      if (!actions) { actions = el('div', 'actions'); row.appendChild(actions); }
+      actions.appendChild(actionButton(S.share, function () { post({ type: 'shareImage', id: imageId }); }));
+    }
   }
 
   window.ChatUI = {
@@ -190,17 +234,17 @@
         return;
       }
       for (var i = 0; i < list.length; i++) {
-        if (list[i].role === 'user') { addUser(list[i].text, list[i].attachments); } else { addAssistant(list[i].text); }
+        if (list[i].role === 'user') { addUser(list[i].text, list[i].attachments, list[i].index !== undefined ? list[i].index : i); } else { addAssistant(list[i].text, list[i].attachments); }
       }
       refreshRegenerate();
       stick = true;
       toBottom(true);
     },
 
-    addUser: function (text, atts) {
+    addUser: function (text, atts, messageIndex) {
       removeEmpty();
       clearErrors();
-      addUser(text, atts);
+      addUser(text, atts, messageIndex);
       stick = true;
       toBottom(true);
     },

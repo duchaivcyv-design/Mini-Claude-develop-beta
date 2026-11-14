@@ -66,7 +66,8 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == SettingsSectionKeys || section == SettingsSectionAssistant || section == SettingsSectionAbout) return 2;
+    if (section == SettingsSectionKeys || section == SettingsSectionAbout) return 2;
+    if (section == SettingsSectionAssistant) return 4;
     return 1;
 }
 
@@ -101,9 +102,15 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             if (indexPath.row == 0) {
                 cell.textLabel.text = L(@"system_prompt_title");
                 cell.detailTextLabel.text = [AppSettings systemPrompt].length > 0 ? L(@"system_prompt_set") : L(@"system_prompt_unset");
-            } else {
+            } else if (indexPath.row == 1) {
                 cell.textLabel.text = L(@"attach_memory_title");
                 cell.detailTextLabel.text = [self attachmentMemoryName];
+            } else if (indexPath.row == 2) {
+                cell.textLabel.text = L(@"output_tokens_title");
+                cell.detailTextLabel.text = [self outputTokensName];
+            } else {
+                cell.textLabel.text = L(@"context_memory_title");
+                cell.detailTextLabel.text = [self contextMemoryName];
             }
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             break;
@@ -145,8 +152,12 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         case SettingsSectionAssistant:
             if (indexPath.row == 0) {
                 [self.navigationController pushViewController:[[SystemPromptViewController alloc] init] animated:YES];
-            } else {
+            } else if (indexPath.row == 1) {
                 [self chooseAttachmentMemory];
+            } else if (indexPath.row == 2) {
+                [self chooseOutputTokens];
+            } else {
+                [self chooseContextMemory];
             }
             break;
         case SettingsSectionGeneral:
@@ -161,13 +172,63 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     }
 }
 
-#pragma mark - Photos and PDFs already sent
+#pragma mark - Attachment memory and request limits
 
 - (NSString *)attachmentMemoryName {
     NSInteger count = [AppSettings attachmentMemory];
     if (count == 1) return L(@"attach_memory_1");
     if (count == 0) return L(@"attach_memory_all");
     return L(@"attach_memory_3");
+}
+
+- (NSString *)outputTokensName {
+    return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
+}
+
+- (NSString *)contextMemoryName {
+    return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
+}
+
+- (void)chooseOutputTokens {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"output_tokens_title")
+                                                                   message:L(@"output_tokens_note")
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *options = @[ @[@2048, @"2,048 tokens"], @[@4096, @"4,096 tokens"], @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"], @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
+    __weak typeof(self) weakSelf = self;
+    for (NSArray *option in options) {
+        NSInteger value = [option[0] integerValue];
+        [sheet addAction:[UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setMaxOutputTokens:value];
+            [weakSelf.tableView reloadData];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)chooseContextMemory {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
+                                                                   message:L(@"context_memory_note")
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
+                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
+                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
+    __weak typeof(self) weakSelf = self;
+    for (NSArray *option in options) {
+        NSUInteger value = [option[0] unsignedIntegerValue];
+        [sheet addAction:[UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setContextLimitChars:value];
+            [weakSelf.tableView reloadData];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:3 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)chooseAttachmentMemory {

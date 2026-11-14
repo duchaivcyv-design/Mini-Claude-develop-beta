@@ -1,6 +1,8 @@
 #import "AttachmentStore.h"
 #import <UIKit/UIKit.h>
 #import <ImageIO/ImageIO.h>
+#import <AVFoundation/AVFoundation.h>
+#import <math.h>
 #import "OfficeText.h"
 
 const NSInteger  kMaxAttachmentsPerMessage = 6;
@@ -12,6 +14,9 @@ static const NSUInteger kMaxPDFBytes       = 10 * 1024 * 1024;
 static const NSUInteger kMaxOfficeBytes    = 15 * 1024 * 1024;     // .docx / .pptx archive size
 static const NSUInteger kMaxTextFileBytes  = 4 * 1024 * 1024;
 static const NSUInteger kMaxImageFileBytes = 40 * 1024 * 1024;
+static const unsigned long long kMaxVideoFileBytes = 100ULL * 1024ULL * 1024ULL;
+static const NSTimeInterval kMaxVideoDuration = 120.0;
+static const NSUInteger kMaxVideoFrames = 6;
 static const NSUInteger kMaxTextChars      = 200000;
 
 static NSString *RootDir(void) {
@@ -76,6 +81,11 @@ static BOOL SafeComponent(id value) {
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *key in @[@"file", @"thumb"]) {
         NSString *path = [self pathForFile:attachment[key] conversation:conversationId];
+        if (path) [fm removeItemAtPath:path error:nil];
+    }
+    NSArray *frames = [attachment[@"frames"] isKindOfClass:[NSArray class]] ? attachment[@"frames"] : @[];
+    for (NSString *file in frames) {
+        NSString *path = [self pathForFile:file conversation:conversationId];
         if (path) [fm removeItemAtPath:path error:nil];
     }
 }
@@ -151,7 +161,7 @@ static BOOL SafeComponent(id value) {
 // Formats Gemini cannot read and that we cannot unpack either: better to say so than to send garbage.
 + (NSSet *)unsupportedExtensions {
     return [NSSet setWithObjects:@"doc", @"xls", @"xlsx", @"ppt", @"odt", @"ods", @"odp", @"pages", @"numbers", @"key", @"rtf",
-            @"zip", @"rar", @"7z", @"mp3", @"mp4", @"mov", @"m4a", @"wav", @"avi", @"exe", @"dmg", @"ipa", @"deb", nil];
+            @"zip", @"rar", @"7z", @"mp3", @"m4a", @"wav", @"avi", @"exe", @"dmg", @"ipa", @"deb", nil];
 }
 
 + (NSString *)decodeText:(NSData *)data {
@@ -204,11 +214,69 @@ static BOOL SafeComponent(id value) {
     return [self saveText:text name:name conversation:conversationId errorKey:errorKey];
 }
 
++ (NSDictionary *)importVideoAtURL:(NSURL *)url conversation:(NSString *)conversationId errorKey:(NSString **)errorKey {
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:nil];
+    unsigned long long fileBytes = [attributes[NSFileSize] unsignedLongLongValue];
+    if (fileBytes == 0 || fileBytes > kMaxVideoFileBytes) {
+        if (errorKey) *errorKey = fileBytes == 0 ? @"att_err_unreadable" : @"att_err_too_large";
+        return nil;
+    }
+
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:@{ AVURLAssetPreferPreciseDurationAndTimingKey: @NO }];
+    NSTimeInterval duration = CMTimeGetSeconds(asset.duration);
+    if (!isfinite(duration) || duration <= 0 || duration > kMaxVideoDuration) {
+        if (errorKey) *errorKey = @"att_err_video";
+        return nil;
+    }
+
+    NSString *dir = [self directoryForConversation:conversationId create:YES];
+    if (!dir) { if (errorKey) *errorKey = @"att_err_unreadable"; return nil; }
+
+    AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
+    generator.appliesPreferredTrackTransform = YES;
+    generator.maximumSize = CGSizeMake(1280, 1280);
+    NSUInteger frameCount = MIN(kMaxVideoFrames, MAX((NSUInteger)2, (NSUInteger)ceil(duration / 8.0)));
+    NSString *attachmentId = [[NSUUID UUID] UUIDString];
+    NSMutableArray *frameFiles = [NSMutableArray array];
+    NSUInteger totalBytes = 0;
+
+    for (NSUInteger i = 0; i < frameCount; i++) {
+        NSTimeInterval seconds = frameCount == 1 ? 0 : (duration - 0.05) * ((double)i / (double)(frameCount - 1));
+        NSError *frameError = nil;
+        CGImageRef cgImage = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(MAX(0, seconds), 600)
+                                               actualTime:NULL error:&frameError];
+        if (!cgImage) continue;
+        UIImage *image = [UIImage imageWithCGImage:cgImage];
+        CGImageRelease(cgImage);
+        NSData *jpeg = [self jpegFromImage:image maxSide:1280 quality:0.72];
+        if (jpeg.length == 0) continue;
+
+        NSString *frameFile = [NSString stringWithFormat:@"%@_v%lu.jpg", attachmentId, (unsigned long)i];
+        if (![jpeg writeToFile:[dir stringByAppendingPathComponent:frameFile] options:NSDataWritingAtomic error:nil]) continue;
+        [frameFiles addObject:frameFile];
+        totalBytes += jpeg.length;
+    }
+
+    if (frameFiles.count == 0) {
+        if (errorKey) *errorKey = @"att_err_video";
+        return nil;
+    }
+    NSString *ext = url.pathExtension.lowercaseString;
+    NSString *mime = [ext isEqualToString:@"mov"] ? @"video/quicktime" : @"video/mp4";
+    return @{ @"id": attachmentId, @"kind": @"video", @"name": url.lastPathComponent ?: @"video.mp4",
+              @"mime": mime, @"frames": frameFiles, @"duration": @(duration), @"bytes": @(totalBytes) };
+}
+
 + (NSDictionary *)importDocumentAtURL:(NSURL *)url conversation:(NSString *)conversationId errorKey:(NSString **)errorKey {
     NSString *name = url.lastPathComponent.length > 0 ? url.lastPathComponent : @"file";
     NSString *ext = name.pathExtension.lowercaseString;
 
     BOOL scoped = [url startAccessingSecurityScopedResource];
+    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
+        NSDictionary *video = [self importVideoAtURL:url conversation:conversationId errorKey:errorKey];
+        if (scoped) [url stopAccessingSecurityScopedResource];
+        return video;
+    }
     NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
     if (scoped) [url stopAccessingSecurityScopedResource];
 

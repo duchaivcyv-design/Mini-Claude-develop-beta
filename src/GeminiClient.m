@@ -73,7 +73,7 @@ static GeminiCheckResult ResultForStatus(NSInteger status) {
 + (BOOL)isChatModelId:(NSString *)modelId {
     if (![modelId hasPrefix:@"gemini"]) return NO;
     // These accept generateContent but produce images/audio or are not plain text chat.
-    NSArray *blocked = @[@"tts", @"image", @"live", @"audio", @"embedding", @"robotics", @"computer-use", @"aqa"];
+    NSArray *blocked = @[@"tts", @"live", @"audio", @"embedding", @"robotics", @"computer-use", @"aqa"];
     for (NSString *token in blocked) {
         if ([modelId rangeOfString:token].location != NSNotFound) return NO;
     }
@@ -133,7 +133,12 @@ static GeminiCheckResult ResultForStatus(NSInteger status) {
             if (![methods isKindOfClass:[NSArray class]] || ![methods containsObject:@"generateContent"]) continue;
             if (![self isChatModelId:modelId]) continue;
             NSString *display = [item[@"displayName"] isKindOfClass:[NSString class]] ? item[@"displayName"] : modelId;
-            [collected addObject:@{ @"id": modelId, @"name": display }];
+            NSMutableDictionary *model = [@{ @"id": modelId, @"name": display } mutableCopy];
+            id outputLimit = item[@"outputTokenLimit"];
+            if ([outputLimit respondsToSelector:@selector(integerValue)] && [outputLimit integerValue] > 0) model[@"outputTokenLimit"] = outputLimit;
+            id inputLimit = item[@"inputTokenLimit"];
+            if ([inputLimit respondsToSelector:@selector(integerValue)] && [inputLimit integerValue] > 0) model[@"inputTokenLimit"] = inputLimit;
+            [collected addObject:model];
         }
 
         NSString *next = [root[@"nextPageToken"] isKindOfClass:[NSString class]] ? root[@"nextPageToken"] : nil;

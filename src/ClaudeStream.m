@@ -1,5 +1,7 @@
 #import "ClaudeStream.h"
 #import "Strings.h"
+#import "AppSettings.h"
+#import "ModelStore.h"
 
 static NSString *const kClaudeMessagesURL = @"https://api.anthropic.com/v1/messages";
 static NSString *const kAnthropicVersion = @"2023-06-01";
@@ -40,9 +42,12 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 
 #pragma mark - Request format
 
-// The API requires max_tokens. Claude 3 models cap at 4096; newer ones accept more.
+// Prefer the per-model cap returned by Anthropic's Models API; use a conservative fallback for older cached lists.
 - (NSInteger)maxTokens {
-    return [self.model hasPrefix:@"claude-3-"] ? 4096 : 8192;
+    NSInteger requested = [AppSettings maxOutputTokens];
+    NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
+    if (modelCap <= 0) modelCap = [self.model hasPrefix:@"claude-3-"] ? 4096 : 8192;
+    return MIN(requested, modelCap);
 }
 
 // Neutral turns -> Anthropic "messages": photos become image blocks, PDFs become document blocks.
@@ -93,7 +98,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
-    config.timeoutIntervalForResource = 600;
+    config.timeoutIntervalForResource = 3600;
     self.session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:[NSOperationQueue mainQueue]];
     self.task = [self.session dataTaskWithRequest:request];
     [self.task resume];

@@ -59,7 +59,7 @@
 "attach_title" = "Attach";
 "attach_camera" = "Take a photo";
 "attach_photo" = "Choose a photo";
-"attach_file" = "Choose a file (PDF, Word, PowerPoint, text…)";
+"attach_file" = "Choose a file (PDF, Word, text, MOV/MP4 video…)";
 "att_err_limit" = "You can attach up to %ld files per message.";
 "att_err_budget" = "The total size of images and PDFs in one message is too large. Remove some files or send them in another message.";
 "att_err_too_large" = "This file is too large. PDF up to 10 MB, Word/PowerPoint up to 15 MB, text up to 4 MB.";
@@ -82,7 +82,7 @@
 "system_prompt_title" = "Instructions for the AI";
 "system_prompt_set" = "Set";
 "system_prompt_unset" = "Not set";
-"system_prompt_hint" = "This text is sent with every message to steer how the AI answers (for example tone or how it explains). Leave it empty if you do not need it.";
+"system_prompt_hint" = "This text is sent with every message to guide how the AI answers. Up to 100,000 characters; long instructions use more context.";
 "system_prompt_placeholder" = "Example: Explain step by step with simple examples and answer in English.";
 "done" = "Done";
 "language" = "Language";
@@ -95,13 +95,13 @@
 "err_no_key_for_provider" = "There is no %@ API key yet. Add one in History › Settings, or choose another model.";
 "reply_truncated" = "*(The reply was cut off because it reached the length limit.)*";
 "chat_prompt_title" = "Instructions for this chat";
-"chat_prompt_hint" = "These instructions apply only to the current chat and replace the general ones from Settings. Leave empty to use the general ones.";
+"chat_prompt_hint" = "These instructions apply only to the current chat and replace the general ones from Settings. Up to 100,000 characters. Leave empty to use the general ones.";
 "chat_prompt_default" = "Using the general ones";
-"attach_memory_title" = "Photos and PDFs already sent";
+"attach_memory_title" = "Photos, PDFs and videos already sent";
 "attach_memory_1" = "Only the latest message";
 "attach_memory_3" = "Latest 3 messages (recommended)";
 "attach_memory_all" = "All (uses more quota)";
-"attach_memory_footer" = "The AI only sees a photo or PDF when it is sent again with each request. Sending fewer saves quota, but the AI can no longer look at older photos/PDFs. Text taken from Word, PowerPoint and text files is always kept.";
+"attach_memory_footer" = "The AI only sees photos, sampled video frames and PDFs when they are sent again with each request. Sending fewer saves quota, but older visual/document content is no longer visible. Text taken from Word, PowerPoint and text files is always kept.";
 "diagnostics_title" = "Diagnostic log";
 "diagnostics_note" = "The log records events and error codes so a problem can be reported accurately. The app does not record API keys, message text or file names; error messages returned by the provider (Google, Anthropic) are kept as they are. Please read it before sending it to whoever is helping you.";
 "diagnostics_empty" = "Nothing has been recorded yet.";
@@ -116,3 +116,17 @@
 "empty_sub_4" = "I'm ready. Where shall we start?";
 "empty_sub_5" = "Send me a question, a photo of your homework or a document.";
 "empty_sub_6" = "What shall we explore today?";
+
+"output_tokens_title" = "Response length";
+"output_tokens_note" = "Sets the maximum output-token budget. The model or provider may enforce a lower cap; a higher value does not make replies faster and may use more quota.";
+"context_memory_title" = "Conversation history sent to AI";
+"context_memory_note" = "This limit is measured in text characters, not tokens. A higher value keeps more earlier messages but can make requests slower and use more quota.";
+"context_memory_value" = "%lu thousand characters";
+"edit" = "Edit";
+"export_file" = "Save as file";
+"export_txt" = "Text file (.txt)";
+"export_docx" = "Word document (.docx)";
+"export_failed" = "Couldn't create the file. Please try again.";
+"save_reply" = "Save reply";
+"att_err_video" = "Couldn't read this video. MOV/MP4 videos up to 120 seconds are supported; the app sends sampled frames, not audio.";
+"share_image" = "Share image";

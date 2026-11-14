@@ -17,10 +17,10 @@
 #import "AttachmentStore.h"
 #import "HistoryViewController.h"
 #import "ModelPickerViewController.h"
+#import "OfficeExport.h"
 
 static const CGFloat kMaxInputHeight = 120;
 static const CGFloat kStripHeight = 64;               // chip row above the text box (56 pt chips + spacing)
-static const NSUInteger kMaxContextChars = 400000;
 static const NSUInteger kGreetingCount = 6;           // how many different lines can appear under the greeting
 
 #pragma mark - Weak script handler (WKUserContentController retains its handlers)
@@ -96,7 +96,9 @@ static NSString *ClippedForLog(NSString *text) {
 @property (assign, nonatomic) NSUInteger greetingIndex;     // which of the kGreetingCount lines this empty chat shows
 @property (copy, nonatomic) NSString *shownGreeting;        // what the page currently shows, to avoid redrawing for nothing
 @property (assign, nonatomic) BOOL attemptIsStreaming;   // the current request is a live stream (vs. single-shot fallback)
+@property (assign, nonatomic) NSInteger streamRetryCount;
 @property (strong, nonatomic) NSMutableString *streamBuffer;
+@property (strong, nonatomic) NSMutableArray *streamGeneratedAttachments;
 
 @property (strong, nonatomic) NSMutableArray *pendingAttachments;   // attachments waiting to be sent with the next message
 @property (assign, nonatomic) NSInteger importsInFlight;
@@ -425,7 +427,10 @@ static NSString *ClippedForLog(NSString *text) {
                                           @"copyCode": L(@"copy"),
                                           @"copied": L(@"copied"),
                                           @"regenerate": L(@"regenerate"),
-                                          @"retry": L(@"retry") }]];
+                                          @"retry": L(@"retry"),
+                                          @"edit": L(@"edit"),
+                                          @"save": L(@"save_reply"),
+                                          @"share": L(@"share_image") }]];
 }
 
 // What the page needs to draw a message's attachments: kind, name, and a small thumbnail for photos.
@@ -445,12 +450,14 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)renderConversation {
     NSString *cid = self.conversation[@"id"];
+    NSArray *messages = self.conversation[@"messages"];
     NSMutableArray *list = [NSMutableArray array];
-    for (NSDictionary *message in self.conversation[@"messages"]) {
+    for (NSUInteger messageIndex = 0; messageIndex < messages.count; messageIndex++) {
+        NSDictionary *message = messages[messageIndex];
         NSString *role = message[@"role"];
         NSString *text = message[@"text"];
         if (![role isKindOfClass:[NSString class]] || ![text isKindOfClass:[NSString class]]) continue;
-        NSMutableDictionary *item = [@{ @"role": role, @"text": text } mutableCopy];
+        NSMutableDictionary *item = [@{ @"role": role, @"text": text, @"index": @(messageIndex) } mutableCopy];
         NSArray *attachments = message[@"attachments"];
         if ([attachments isKindOfClass:[NSArray class]] && attachments.count > 0) {
             item[@"attachments"] = [self webAttachmentsFrom:attachments conversation:cid];
@@ -475,11 +482,67 @@ static NSString *ClippedForLog(NSString *text) {
         if ([text isKindOfClass:[NSString class]]) [UIPasteboard generalPasteboard].string = text;
     } else if ([type isEqualToString:@"regenerate"]) {
         [self regenerate];
+    } else if ([type isEqualToString:@"edit"]) {
+        [self editMessageAtIndex:[body[@"index"] integerValue]];
+    } else if ([type isEqualToString:@"save"]) {
+        NSString *text = body[@"text"];
+        if ([text isKindOfClass:[NSString class]] && text.length > 0) [self offerExportForText:text];
     } else if ([type isEqualToString:@"image"]) {
         [self showImageForAttachmentId:body[@"id"]];
+    } else if ([type isEqualToString:@"shareImage"]) {
+        [self shareImageForAttachmentId:body[@"id"]];
     } else if ([type isEqualToString:@"jserror"]) {
         [DiagnosticLog log:@"page script error: %@ (line %@)", ClippedForLog(body[@"message"]), body[@"line"] ?: @"?"];
     }
+}
+
+- (void)shareImageForAttachmentId:(NSString *)attachmentId {
+    if (![attachmentId isKindOfClass:[NSString class]] || attachmentId.length == 0) return;
+    NSString *cid = self.conversation[@"id"];
+    for (NSDictionary *message in self.conversation[@"messages"]) {
+        NSArray *attachments = [message[@"attachments"] isKindOfClass:[NSArray class]] ? message[@"attachments"] : @[];
+        for (NSDictionary *attachment in attachments) {
+            if (![attachment[@"id"] isEqualToString:attachmentId] || ![attachment[@"kind"] isEqualToString:@"image"]) continue;
+            NSString *path = [AttachmentStore pathForFile:attachment[@"file"] conversation:cid];
+            if (!path) return;
+            UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+            activity.popoverPresentationController.sourceView = self.view;
+            activity.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+            [self presentViewController:activity animated:YES completion:nil];
+            return;
+        }
+    }
+}
+
+- (void)offerExportForText:(NSString *)text {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"export_file")
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak typeof(self) weakSelf = self;
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"export_txt") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [weakSelf exportText:text asWord:NO];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"export_docx") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [weakSelf exportText:text asWord:YES];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = self.view;
+    sheet.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMaxY(self.view.bounds) - 80, 1, 1);
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)exportText:(NSString *)text asWord:(BOOL)asWord {
+    NSError *error = nil;
+    NSURL *url = asWord ? [OfficeExport writeWordFile:text error:&error] : [OfficeExport writeTextFile:text error:&error];
+    if (!url) {
+        [self showAlertMessage:L(@"export_failed")];
+        [DiagnosticLog log:@"reply export failed: %@", error.localizedDescription ?: @"unknown"];
+        return;
+    }
+    UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    activity.popoverPresentationController.sourceView = self.view;
+    activity.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+    [self presentViewController:activity animated:YES completion:nil];
 }
 
 // Opens the stored (2048 px) photo of a message in the full-screen viewer.
@@ -826,7 +889,7 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)presentDocumentPicker {
     UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data", @"public.content"]
+        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data", @"public.content", @"public.movie", @"public.video", @"com.apple.quicktime-movie", @"public.mpeg-4"]
                                                                inMode:UIDocumentPickerModeImport];
     picker.delegate = self;
     picker.allowsMultipleSelection = YES;
@@ -946,7 +1009,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
     [ConversationStore saveConversation:self.conversation];
 
-    [self callJS:@"addUser" args:@[text, [self webAttachmentsFrom:attachments conversation:cid]]];
+    [self callJS:@"addUser" args:@[text, [self webAttachmentsFrom:attachments conversation:cid], @([messages count] - 1)]];
     [self.pendingAttachments removeAllObjects];
     [self refreshAttachStrip];
     self.textView.text = @"";
@@ -966,8 +1029,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 // Turns the saved messages into provider-neutral "turns" (the stream class converts them to Gemini's or Claude's JSON).
 // Attachments become parts that come before the typed text:
-//   photos and PDFs  -> base64 data, as long as they fit in the size budget (newest first)
-//   text/Word/PPT    -> the extracted text
+//   photos, sampled video frames and PDFs -> base64 data, as long as they fit in the size budget (newest first)
+//   text/Word/PPT                      -> the extracted text
 - (void)addPartsForAttachment:(NSDictionary *)att
                  conversation:(NSString *)cid
                     inlineIds:(NSSet *)inlineIds
@@ -983,6 +1046,22 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             ? [NSString stringWithFormat:@"[Attached file: %@]\n%@", name, content]
             : [NSString stringWithFormat:@"[Attached file unavailable: %@]", name];
         [parts addObject:@{ @"type": @"text", @"text": text }];
+    } else if ([kind isEqualToString:@"video"]) {
+        NSArray *frames = [att[@"frames"] isKindOfClass:[NSArray class]] ? att[@"frames"] : @[];
+        if ([inlineIds containsObject:att[@"id"]] && frames.count > 0) {
+            NSUInteger addedFrames = 0;
+            for (NSString *frameFile in frames) {
+                NSString *framePath = [AttachmentStore pathForFile:frameFile conversation:cid];
+                NSData *frameData = framePath ? [NSData dataWithContentsOfFile:framePath] : nil;
+                if (frameData.length == 0) continue;
+                [parts addObject:@{ @"type": @"image", @"mime": @"image/jpeg",
+                                    @"data": [frameData base64EncodedStringWithOptions:0] }];
+                addedFrames++;
+            }
+            if (addedFrames == 0) [parts addObject:@{ @"type": @"text", @"text": [NSString stringWithFormat:@"[Video frames unavailable: %@]", name] }];
+        } else {
+            [parts addObject:@{ @"type": @"text", @"text": [NSString stringWithFormat:@"[Earlier video not included: %@]", name] }];
+        }
     } else if ([kind isEqualToString:@"image"] || [kind isEqualToString:@"pdf"]) {
         NSData *data = ([inlineIds containsObject:att[@"id"]] && path) ? [NSData dataWithContentsOfFile:path] : nil;
         if (data.length > 0) {
@@ -1003,8 +1082,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *cid = self.conversation[@"id"];
     NSArray *messages = self.conversation[@"messages"];
 
-    // Photos and PDFs are re-sent with every request, which costs quota. Only the newest messages that carry them
-    // (as many as the setting allows, 0 = all) get to include the real data, within the byte budget; older ones
+    // Photos, video keyframes and PDFs are re-sent with each request, which costs quota. Only the newest media
+    // messages (as many as the setting allows, 0 = all) include their data, within the byte budget; older ones
     // become a short note. Text taken from Word/PowerPoint/text files is not affected.
     NSInteger memory = [AppSettings attachmentMemory];
     NSInteger mediaMessages = 0;
@@ -1016,14 +1095,14 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         BOOL hasMedia = NO;
         for (NSDictionary *att in atts) {
             NSString *kind = att[@"kind"];
-            if ([kind isEqualToString:@"image"] || [kind isEqualToString:@"pdf"]) { hasMedia = YES; break; }
+            if ([kind isEqualToString:@"image"] || [kind isEqualToString:@"pdf"] || [kind isEqualToString:@"video"]) { hasMedia = YES; break; }
         }
         if (!hasMedia) continue;
         mediaMessages++;
         if (memory > 0 && mediaMessages > memory) continue;
         for (NSDictionary *att in atts) {
             NSString *kind = att[@"kind"];
-            if (![kind isEqualToString:@"image"] && ![kind isEqualToString:@"pdf"]) continue;
+            if (![kind isEqualToString:@"image"] && ![kind isEqualToString:@"pdf"] && ![kind isEqualToString:@"video"]) continue;
             NSUInteger bytes = [att[@"bytes"] unsignedIntegerValue];
             if (bytes <= remaining && att[@"id"]) {
                 remaining -= bytes;
@@ -1055,9 +1134,59 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Keep the request a sensible size: drop the oldest turns first, and never start with an assistant turn.
-    while (turns.count > 1 && [self totalTextChars:turns] > kMaxContextChars) [turns removeObjectAtIndex:0];
+    // Respect both the user's chosen history size and the selected model's published input limit.
+    // The conversion is deliberately conservative because characters are only an estimate of tokens.
+    NSUInteger contextLimit = [AppSettings contextLimitChars];
+    AIProvider provider = [Provider forModelId:self.model];
+    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
+    if (inputTokenCap > 0) {
+        NSUInteger modelCharCap = (NSUInteger)inputTokenCap * 2;
+        NSUInteger reservedChars = [self effectiveSystemPrompt].length + 4096;
+        modelCharCap = modelCharCap > reservedChars ? modelCharCap - reservedChars : 4096;
+        contextLimit = MIN(contextLimit, modelCharCap);
+    } else {
+        // The cached model list may predate token metadata. Limit history until the user refreshes that list.
+        contextLimit = MIN(contextLimit, (NSUInteger)32000);
+    }
+
+    // Drop the oldest turns first, and never start with an assistant turn.
+    while (turns.count > 1 && [self totalTextChars:turns] > contextLimit) [turns removeObjectAtIndex:0];
     while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
+
+    // A single very long newest turn cannot be dropped wholesale. Trim its oldest text while preserving the tail
+    // (which normally contains the current question) so the request still fits the selected model's estimate.
+    if (turns.count == 1 && [self totalTextChars:turns] > contextLimit) {
+        NSMutableArray *parts = turns.firstObject[@"parts"];
+        NSString *marker = @"[Earlier text omitted to fit the model context]\n";
+        for (NSInteger i = 0; i < (NSInteger)parts.count && [self totalTextChars:turns] > contextLimit; i++) {
+            NSMutableDictionary *part = parts[(NSUInteger)i];
+            NSString *content = [part[@"text"] isKindOfClass:[NSString class]] ? part[@"text"] : nil;
+            if (content.length == 0) continue;
+
+            NSUInteger total = [self totalTextChars:turns];
+            NSUInteger excess = total - contextLimit;
+            if (content.length <= excess) {
+                [parts removeObjectAtIndex:(NSUInteger)i];
+                i--;
+                continue;
+            }
+
+            // Account for every other text part (especially the current question) before choosing the tail size.
+            NSUInteger otherChars = total - content.length;
+            NSUInteger available = contextLimit > otherChars + marker.length
+                ? contextLimit - otherChars - marker.length : 0;
+            NSUInteger keep = MIN(available, content.length - excess);
+            if (keep > 0) {
+                NSUInteger start = content.length - keep;
+                NSRange safe = [content rangeOfComposedCharacterSequencesForRange:NSMakeRange(start, keep)];
+                part[@"text"] = [marker stringByAppendingString:[content substringWithRange:safe]];
+                break;
+            }
+
+            [parts removeObjectAtIndex:(NSUInteger)i];
+            i--;
+        }
+    }
     return turns;
 }
 
@@ -1085,6 +1214,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 - (void)startStreamingReply {
     if (![self checkKeyForCurrentModel]) return;
     self.streamBuffer = [NSMutableString string];
+    self.streamRetryCount = 0;
     self.streaming = YES;
     [self updateSendButton];
     [self callJS:@"begin" args:@[]];
@@ -1094,8 +1224,17 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 // Instructions of this conversation if it has its own, otherwise the general ones from Settings.
 - (NSString *)effectiveSystemPrompt {
     NSString *own = self.conversation[@"system"];
-    if ([own isKindOfClass:[NSString class]] && own.length > 0) return own;
-    return [AppSettings systemPrompt];
+    NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
+    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
+    if (inputTokenCap > 0) {
+        // Keep room for conversation history and media; the stored 100k prompt is clipped only for this request.
+        NSUInteger promptBudget = MIN(kMaxSystemPromptChars, ((NSUInteger)inputTokenCap * 2) / 3);
+        if (prompt.length > promptBudget) {
+            NSRange safe = [prompt rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, promptBudget)];
+            prompt = [prompt substringWithRange:safe];
+        }
+    }
+    return prompt ?: @"";
 }
 
 // Counts only: never the text itself.
@@ -1124,6 +1263,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:self.model turns:turns system:system];
     stream.useStreaming = useStreaming;
     self.stream = stream;
+    if (!self.streamGeneratedAttachments) self.streamGeneratedAttachments = [NSMutableArray array];
     self.requestStartTime = CFAbsoluteTimeGetCurrent();
     [DiagnosticLog log:@"request: %@ model=%@ mode=%@ %@ systemChars=%lu", [Provider nameFor:provider], self.model,
                        useStreaming ? @"stream" : @"single", [self summaryOfTurns:turns], (unsigned long)system.length];
@@ -1134,6 +1274,19 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         if (!me || me.stream != weakStream) return;
         [me.streamBuffer appendString:text];
         [me callJS:@"delta" args:@[text]];
+    };
+    stream.onImage = ^(NSData *data, NSString *mimeType) {
+        ChatViewController *me = weakSelf;
+        if (!me || me.stream != weakStream || data.length == 0) return;
+        NSString *errorKey = nil;
+        NSDictionary *attachment = [AttachmentStore importImageData:data name:@"generated-image.jpg"
+                                                         conversation:me.conversation[@"id"] errorKey:&errorKey];
+        if (attachment) {
+            [me.streamGeneratedAttachments addObject:attachment];
+            [DiagnosticLog log:@"generated image saved: bytes=%@ mime=%@", attachment[@"bytes"], mimeType ?: @"image/*"];
+        } else {
+            [DiagnosticLog log:@"generated image could not be stored: %@", errorKey ?: @"unknown"];
+        }
     };
     stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
         ChatViewController *me = weakSelf;
@@ -1149,21 +1302,38 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        self.attemptIsStreaming ? @"stream" : @"single", StreamErrorName(error), (long)status,
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
-    if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.attemptIsStreaming) {
-        // The live stream failed before any text arrived (some networks stall long-lived responses).
-        // Try once more as a normal single request; the typing indicator stays on screen meanwhile.
-        [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
+    AIProvider currentProvider = [Provider forModelId:self.model];
+    BOOL largeClaudeReply = currentProvider == AIProviderClaude && [AppSettings maxOutputTokens] > 21333;
+    if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
         self.stream = nil;
-        [self launchRequestStreaming:NO];
-        return;
+        if (largeClaudeReply && self.streamRetryCount < 1) {
+            // Large Claude outputs must remain streamed. Retry the stream once rather than switching to a single response.
+            self.streamRetryCount++;
+            [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+            });
+            return;
+        }
+        if (!largeClaudeReply) {
+            // Smaller replies can fall back to a normal response if a long-lived stream fails before any text arrives.
+            [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
+            [self launchRequestStreaming:NO];
+            return;
+        }
     }
 
     self.stream = nil;
     self.streamBuffer = nil;
     self.streaming = NO;
 
-    if (partial.length > 0) [self appendAssistantMessage:partial];
+    NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
+    if (partial.length > 0 || generatedAttachments.count > 0) {
+        [self appendAssistantMessage:partial attachments:generatedAttachments];
+    }
+    self.streamGeneratedAttachments = nil;
     [self callJS:@"end" args:@[partial]];
+    if (generatedAttachments.count > 0) [self renderConversation];
     if (error != GeminiStreamErrorNone && error != GeminiStreamErrorCancelled) {
         [self callJS:@"error" args:@[[self messageForError:error status:status detail:detail], @YES]];
     }
@@ -1171,8 +1341,15 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 }
 
 - (void)appendAssistantMessage:(NSString *)text {
+    [self appendAssistantMessage:text attachments:@[]];
+}
+
+- (void)appendAssistantMessage:(NSString *)text attachments:(NSArray *)attachments {
+    NSMutableDictionary *message = [@{ @"role": @"model", @"text": text ?: @"",
+                                        @"ts": @([[NSDate date] timeIntervalSince1970]) } mutableCopy];
+    if (attachments.count > 0) message[@"attachments"] = attachments;
     NSMutableArray *messages = self.conversation[@"messages"];
-    [messages addObject:@{ @"role": @"model", @"text": text, @"ts": @([[NSDate date] timeIntervalSince1970]) }];
+    [messages addObject:message];
     self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
     [ConversationStore saveConversation:self.conversation];
 }
@@ -1188,8 +1365,46 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.streamBuffer = nil;
     self.streaming = NO;
     [old cancel];
-    if (partial.length > 0) [self appendAssistantMessage:partial];
+    NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
+    if (partial.length > 0 || generatedAttachments.count > 0) [self appendAssistantMessage:partial attachments:generatedAttachments];
+    self.streamGeneratedAttachments = nil;
     [self updateSendButton];
+}
+
+- (void)editMessageAtIndex:(NSInteger)index {
+    if (self.streaming || !self.webReady) return;
+    NSMutableArray *messages = self.conversation[@"messages"];
+    if (index < 0 || index >= (NSInteger)messages.count) return;
+    NSDictionary *target = messages[(NSUInteger)index];
+    if (![target[@"role"] isEqualToString:@"user"]) return;
+
+    // Remove any unsent draft attachments before restoring the selected message's attachments.
+    NSString *cid = self.conversation[@"id"];
+    for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
+    [self.pendingAttachments removeAllObjects];
+
+    NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
+    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
+
+    // Keep attachments belonging to the edited message; delete files referenced only by later messages.
+    for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
+        if (i != index) {
+            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
+                ? messages[(NSUInteger)i][@"attachments"] : @[];
+            for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
+        }
+    }
+    [messages removeObjectsInRange:NSMakeRange((NSUInteger)index, messages.count - (NSUInteger)index)];
+    [self.pendingAttachments addObjectsFromArray:attachments];
+
+    self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
+    [ConversationStore saveConversation:self.conversation];
+    [self renderConversation];
+    [self refreshAttachStrip];
+    self.textView.text = text;
+    [self textViewDidChange:self.textView];
+    [self updateSendButton];
+    [self.textView becomeFirstResponder];
 }
 
 - (void)regenerate {
