@@ -1,0 +1,93 @@
+#import "KeyStore.h"
+#import <Security/Security.h>
+
+static NSString *const kKeyService = @"com.puc.claudemini";
+
+// The Gemini names are the ones earlier versions used, so an existing key keeps working after an update.
+static NSString *AccountFor(AIProvider provider) {
+    return provider == AIProviderClaude ? @"claude-api-key" : @"gemini-api-key";
+}
+
+static NSString *FileNameFor(AIProvider provider) {
+    return provider == AIProviderClaude ? @"key-claude.dat" : @"key.dat";
+}
+
+@implementation KeyStore
+
++ (NSMutableDictionary *)baseQueryFor:(AIProvider)provider {
+    return [@{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeyService,
+        (__bridge id)kSecAttrAccount: AccountFor(provider)
+    } mutableCopy];
+}
+
++ (NSString *)fallbackPathFor:(AIProvider)provider {
+    NSString *dir = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
+    dir = [dir stringByAppendingPathComponent:@"ClaudeMini"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                              withIntermediateDirectories:YES
+                                               attributes:@{NSFilePosixPermissions: @0700}
+                                                    error:nil];
+    return [dir stringByAppendingPathComponent:FileNameFor(provider)];
+}
+
++ (NSString *)loadKeyForProvider:(AIProvider)provider {
+    NSMutableDictionary *query = [self baseQueryFor:provider];
+    query[(__bridge id)kSecReturnData] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status == errSecSuccess && result != NULL) {
+        NSData *data = (__bridge_transfer NSData *)result;
+        NSString *key = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (key.length > 0) return key;
+    }
+
+    NSData *fileData = [NSData dataWithContentsOfFile:[self fallbackPathFor:provider]];
+    if (fileData.length > 0) {
+        NSString *key = [[NSString alloc] initWithData:fileData encoding:NSUTF8StringEncoding];
+        if (key.length > 0) return key;
+    }
+    return nil;
+}
+
++ (BOOL)saveKey:(NSString *)key forProvider:(AIProvider)provider {
+    if (key.length == 0) return NO;
+    NSData *data = [key dataUsingEncoding:NSUTF8StringEncoding];
+
+    SecItemDelete((__bridge CFDictionaryRef)[self baseQueryFor:provider]);
+    NSMutableDictionary *add = [self baseQueryFor:provider];
+    add[(__bridge id)kSecValueData] = data;
+    add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
+    OSStatus status = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+
+    NSString *path = [self fallbackPathFor:provider];
+    if (status == errSecSuccess) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        return YES;
+    }
+
+    // Keychain refused: use the protected file instead.
+    BOOL ok = [data writeToFile:path options:NSDataWritingAtomic error:nil];
+    if (ok) {
+        [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:path error:nil];
+    }
+    return ok;
+}
+
++ (void)deleteKeyForProvider:(AIProvider)provider {
+    SecItemDelete((__bridge CFDictionaryRef)[self baseQueryFor:provider]);
+    [[NSFileManager defaultManager] removeItemAtPath:[self fallbackPathFor:provider] error:nil];
+}
+
++ (BOOL)hasKeyForProvider:(AIProvider)provider {
+    return [self loadKeyForProvider:provider].length > 0;
+}
+
++ (BOOL)hasAnyKey {
+    return [self hasKeyForProvider:AIProviderGemini] || [self hasKeyForProvider:AIProviderClaude];
+}
+
+@end

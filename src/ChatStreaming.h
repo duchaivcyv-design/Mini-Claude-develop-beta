@@ -1,0 +1,37 @@
+#import <Foundation/Foundation.h>
+
+typedef NS_ENUM(NSInteger, GeminiStreamError) {   // (name kept from the first version; it now covers every provider)
+    GeminiStreamErrorNone = 0,
+    GeminiStreamErrorCancelled,
+    GeminiStreamErrorInvalidKey,
+    GeminiStreamErrorPermissionDenied,
+    GeminiStreamErrorModelNotFound,
+    GeminiStreamErrorRateLimited,
+    GeminiStreamErrorNetwork,
+    GeminiStreamErrorBlocked,
+    GeminiStreamErrorServer,
+    GeminiStreamErrorEmptyReply,
+    GeminiStreamErrorTooLarge,
+    GeminiStreamErrorNoCredit,      // Claude: the account has no credit left
+    GeminiStreamErrorUnknown
+};
+
+// One request to a chat model (live stream, or a single request as a fallback). All callbacks run on the main queue.
+//
+// The conversation is passed as provider-neutral "turns", each converted to the provider's JSON by the stream itself:
+//   @{ @"role": @"user" | @"assistant",
+//      @"parts": @[ @{ @"type": @"text",  @"text": ... },
+//                   @{ @"type": @"image", @"mime": @"image/jpeg", @"data": <base64> },
+//                   @{ @"type": @"pdf",   @"data": <base64> } ] }
+@protocol ChatStreaming <NSObject>
+
+// YES (default): live stream (Server-Sent Events). NO: one normal request/response, delivered as a single delta.
+@property (assign, nonatomic) BOOL useStreaming;
+
+@property (copy, nonatomic) void (^onDelta)(NSString *text);
+@property (copy, nonatomic) void (^onFinish)(GeminiStreamError error, NSInteger httpStatus, NSString *detail);
+
+- (void)start;
+- (void)cancel;
+
+@end
