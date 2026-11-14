@@ -1,11 +1,11 @@
-name: Build  IPA
+name: Build GestaltX IPA
 
-# Follows ClaudeMini's macOS GitHub Actions build layout, while retaining
-# GestaltX's Xcode build and App Group-aware ad-hoc IPA signing.
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - '**.md'
   pull_request:
     branches: [main]
   release:
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       REF: ${{ github.event.release.tag_name || inputs.ref || github.ref }}
       TAG: ${{ github.event.release.tag_name || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
@@ -37,78 +37,44 @@ jobs:
         with:
           ref: ${{ env.REF }}
           fetch-depth: 0
-          submodules: recursive
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       - name: Toolchain info
         run: |
           set -euo pipefail
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          swift --version
-          rustc --version || true
 
-      - name: Restore DeviceConsole cache
-        id: deviceconsole-cache
-        uses: actions/cache@v4
-        with:
-          path: Native/DeviceConsole/build/GXDeviceConsole.xcframework
-          key: gestaltx-deviceconsole-${{ runner.os }}-${{ hashFiles('**/build-xcframework.sh', '**/Cargo.toml', '**/Cargo.lock', '**/*.rs') }}
-
-      - name: Build or locate DeviceConsole XCFramework
-        if: steps.deviceconsole-cache.outputs.cache-hit != 'true'
-        shell: bash
+      - name: Install IPA packaging tools
         run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/Native/DeviceConsole/build/GXDeviceConsole.xcframework"
+          brew install ldid dpkg
 
-          # The source may be checked in at a different directory or supplied
-          # as a submodule. Locate the actual script instead of blindly cd'ing
-          # into Native/DeviceConsole.
-          build_script="$(find "$GITHUB_WORKSPACE" -type f -name build-xcframework.sh \
-            -not -path '*/.git/*' -print -quit 2>/dev/null || true)"
-
-          if [[ -n "$build_script" ]]; then
-            native_dir="$(dirname "$build_script")"
-            echo "Found DeviceConsole build script: $build_script"
-            rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-            if ! command -v nasm >/dev/null 2>&1; then brew install nasm; fi
-            (cd "$native_dir" && bash ./build-xcframework.sh)
-          fi
-
-          # Accept a prebuilt framework or the output from the located script.
-          framework="$(find "$GITHUB_WORKSPACE" -type d -name GXDeviceConsole.xcframework \
-            -not -path '*/.git/*' -print -quit 2>/dev/null || true)"
-          if [[ -z "$framework" ]]; then
-            echo '::error::GXDeviceConsole.xcframework and build-xcframework.sh are both missing.'
-            echo 'The GestaltX source checkout must include the DeviceConsole source/submodule or its prebuilt XCFramework.'
-            echo 'Repository top level:'
-            ls -la "$GITHUB_WORKSPACE"
-            echo 'Tracked DeviceConsole-related files:'
-            git ls-files '*DeviceConsole*' '*build-xcframework.sh' || true
-            exit 1
-          fi
-
-          if [[ "$framework" != "$expected" ]]; then
-            mkdir -p "$(dirname "$expected")"
-            rm -rf "$expected"
-            ditto "$framework" "$expected"
-          fi
-          test -d "$expected"
-
-      - name: Build IPA
+      - name: Build IPA using repository build.sh
         id: build
         shell: bash
         run: |
           set -euo pipefail
-          export BUILD_DATE="$(date -u +%F)"
-          chmod +x .github/scripts/build-ipa.sh
-          bash .github/scripts/build-ipa.sh "$RUNNER_TEMP/ipa"
+          chmod +x build.sh
+          ./build.sh
+          shopt -s nullglob
+          ipa_files=(dist/*.ipa)
+          if (( ${#ipa_files[@]} == 0 )); then
+            echo "::error::build.sh completed but did not create an IPA in dist/."
+            echo "Expected tools/make_ipa.sh to create dist/*.ipa."
+            ls -la dist 2>/dev/null || true
+            exit 1
+          fi
+          printf 'ipa=%s\n' "${ipa_files[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GestaltX-${{ steps.build.outputs.version }}-ipa
-          path: ${{ steps.build.outputs.ipa }}
+          name: GestaltX-ipa
+          path: dist/*.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -116,21 +82,14 @@ jobs:
         if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          IPA: ${{ steps.build.outputs.ipa }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          notes="$RUNNER_TEMP/release-notes.md"
-          : > "$notes"
-          if [[ -f CHANGELOG.md ]]; then
-            awk -v ver="$version" '
-              $0 ~ "^## \\[" ver "\\]" { found = 1; next }
-              found && /^## \[/ { exit }
-              found { if (!started && $0 == "") next; started = 1; print }
-            ' CHANGELOG.md >> "$notes"
+          ipa="$(find dist -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          if [[ -z "$ipa" ]]; then
+            echo "::error::No IPA found in dist/."
+            exit 1
           fi
-          if [[ ! -s "$notes" ]]; then printf 'GestaltX %s\n' "$TAG" > "$notes"; fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "GestaltX $TAG" --notes-file "$notes"
+            gh release create "$TAG" --verify-tag --title "GestaltX ${TAG}" --generate-notes
           fi
-          gh release upload "$TAG" "$IPA" --clobber
+          gh release upload "$TAG" "$ipa" --clobber
