@@ -67,7 +67,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == SettingsSectionKeys || section == SettingsSectionAbout) return 2;
-    if (section == SettingsSectionAssistant) return 4;
+    if (section == SettingsSectionAssistant) return 5;
     return 1;
 }
 
@@ -108,9 +108,12 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             } else if (indexPath.row == 2) {
                 cell.textLabel.text = L(@"output_tokens_title");
                 cell.detailTextLabel.text = [self outputTokensName];
-            } else {
+            } else if (indexPath.row == 3) {
                 cell.textLabel.text = L(@"context_memory_title");
                 cell.detailTextLabel.text = [self contextMemoryName];
+            } else {
+                cell.textLabel.text = @"Mức suy luận AI";
+                cell.detailTextLabel.text = [self reasoningLevelName];
             }
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             break;
@@ -156,8 +159,10 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
                 [self chooseAttachmentMemory];
             } else if (indexPath.row == 2) {
                 [self chooseOutputTokens];
-            } else {
+            } else if (indexPath.row == 3) {
                 [self chooseContextMemory];
+            } else {
+                [self chooseReasoningLevel];
             }
             break;
         case SettingsSectionGeneral:
@@ -183,6 +188,37 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (NSString *)outputTokensName {
     return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
+}
+
+
+- (NSString *)reasoningLevelName {
+    switch ([AppSettings reasoningLevel]) {
+        case AIReasoningLevelLow: return @"Thấp";
+        case AIReasoningLevelMedium: return @"Trung bình";
+        case AIReasoningLevelHigh: return @"Cao";
+        case AIReasoningLevelVeryHigh: return @"Siêu cao";
+        case AIReasoningLevelMax: return @"MAX ×8 (nếu model hỗ trợ)";
+    }
+    return @"Trung bình";
+}
+
+- (void)chooseReasoningLevel {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Mức suy luận AI"
+                                                                   message:@"Mức thực tế phụ thuộc model và API. MAX ×8 không thể vượt giới hạn nhà cung cấp."
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8 (nếu model hỗ trợ)"];
+    __weak typeof(self) weakSelf = self;
+    [names enumerateObjectsUsingBlock:^(NSString *name, NSUInteger idx, BOOL *stop) {
+        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setReasoningLevel:(AIReasoningLevel)idx];
+            [weakSelf.tableView reloadData];
+        }]];
+    }];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:4 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (NSString *)contextMemoryName {
