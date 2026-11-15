@@ -1503,7 +1503,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self updateSendButton];
     [self callJS:@"begin" args:@[]];
     
-    // Tự động kích hoạt nhanh Fast Mode nếu model hỗ trợ để đẩy tốc độ phản hồi tối đa
     if ([self currentModelSupportsFastMode]) {
         [AppSettings setFastModeEnabled:YES];
         [self updateToolButtons];
@@ -1567,7 +1566,17 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     __weak typeof(self) weakSelf = self;
     __weak id<ChatStreaming> weakStream = stream;
     
-    // Tối ưu hóa render delta trực tiếp trên main thread với độ trễ tối thiểu để tăng tốc độ hiển thị chữ chạy
+    // Khởi tạo bộ đếm thời gian chống kẹt (Timeout 30 giây)
+    __block BOOL hasFinished = NO;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        ChatViewController *me = weakSelf;
+        if (!me || me.stream != weakStream || hasFinished) return;
+        if (me.streaming && me.streamBuffer.length == 0) {
+            [DiagnosticLog log:@"Stream timeout triggered: no data received within 30 seconds"];
+            [me streamFinishedWithError:GeminiStreamErrorNetwork status:408 detail:@"Yêu cầu quá thời gian chờ (Timeout)."];
+        }
+    });
+    
     stream.onDelta = ^(NSString *text) {
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || text.length == 0) return;
@@ -1597,7 +1606,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     
     stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
         ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream) return;
+        if (!me || me.stream != weakStream || hasFinished) return;
+        hasFinished = YES;
         [me streamFinishedWithError:error status:status detail:detail];
     };
     
@@ -1655,7 +1665,10 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         [self appendAssistantMessage:partial attachments:generatedAttachments];
     }
     self.streamGeneratedAttachments = nil;
+    
+    // Luôn gọi lệnh 'end' để JavaScript thoát trạng thái "Đang xử lý..."
     [self callJS:@"end" args:@[partial]];
+    
     if (generatedAttachments.count > 0) [self renderConversation];
     if (error != GeminiStreamErrorNone && error != GeminiStreamErrorCancelled) {
         [self callJS:@"error" args:@[[self messageForError:error status:status detail:detail], @YES]];
