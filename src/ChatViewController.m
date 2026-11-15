@@ -1635,6 +1635,39 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self startStreamingReply];
 }
 
+- (void)editMessageAtIndex:(NSInteger)index {
+    if (self.streaming || !self.webReady) return;
+    NSMutableArray *messages = self.conversation[@"messages"];
+    if (index < 0 || index >= (NSInteger)messages.count) return;
+    NSDictionary *target = messages[(NSUInteger)index];
+    if (![target[@"role"] isEqualToString:@"user"]) return;
+
+    NSString *cid = self.conversation[@"id"];
+    for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
+    [self.pendingAttachments removeAllObjects];
+
+    NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
+    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
+
+    for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
+        if (i != index) {
+            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
+                ? messages[(NSUInteger)i][@"attachments"] : @[];
+            for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
+        }
+    }
+    [messages removeObjectsInRange:NSMakeRange((NSUInteger)index, messages.count - (NSUInteger)index)];
+    [self.pendingAttachments addObjectsFromArray:attachments];
+
+    self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
+    [ConversationStore saveConversation:self.conversation];
+    [self renderConversation];
+    [self refreshAttachStrip];
+    self.textView.text = text;
+    [self textViewDidChange:self.textView];
+    [self updateSendButton];
+    [self.textView becomeFirstResponder];
+}
 
 #pragma mark - Error text
 
