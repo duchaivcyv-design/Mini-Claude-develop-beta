@@ -97,6 +97,7 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIButton *sendButton;
 @property (strong, nonatomic) UIButton *modelButton;
 @property (assign, nonatomic) CGFloat keyboardOverlap;
+@property (copy, nonatomic) NSString *selectedMentionItem; // Lưu mục được chọn từ @ (ví dụ: @"Docs", @"Sheet", ...)
 
 @property (strong, nonatomic) NSMutableDictionary *conversation;
 @property (copy, nonatomic) NSString *model;
@@ -489,58 +490,128 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)mentionTapped {
     [self.view endEditing:YES];
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"@ Công cụ" message:@"Chọn tác vụ hoặc tích hợp" preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"@ Công cụ" 
+                                                                    message:@"Chọn tác vụ hoặc tích hợp" 
+                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+    
     __weak typeof(self) weakSelf = self;
     NSArray *recent = self.conversation[@"messages"];
     NSString *lastReply = nil;
-    for (NSInteger i = (NSInteger)recent.count - 1; i >= 0; i--) {
-        NSDictionary *message = recent[(NSUInteger)i];
-        if (![message[@"role"] isEqualToString:@"user"] && [message[@"text"] isKindOfClass:[NSString class]] && [message[@"text"] length] > 0) { lastReply = message[@"text"]; break; }
+    
+    if ([recent isKindOfClass:[NSArray class]]) {
+        for (NSInteger i = (NSInteger)recent.count - 1; i >= 0; i--) {
+            NSDictionary *message = recent[(NSUInteger)i];
+            if ([message isKindOfClass:[NSDictionary class]]) {
+                NSString *role = message[@"role"];
+                NSString *text = message[@"text"];
+                if (![role isEqualToString:@"user"] && [text isKindOfClass:[NSString class]] && text.length > 0) {
+                    lastReply = text;
+                    break;
+                }
+            }
+        }
     }
-    // Always show file-creation commands. If there is no assistant reply yet, use the
-    // draft currently in the input box instead of hiding these actions from the @ menu.
+    
+    // Tạo hành động xuất tệp TXT
     [sheet addAction:[UIAlertAction actionWithTitle:@"Tạo tệp TXT" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *source = lastReply.length > 0 ? lastReply : [weakSelf trimmedInput];
-        if (source.length > 0) [weakSelf exportText:source asWord:NO];
-        else [weakSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp TXT."];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSString *source = lastReply.length > 0 ? lastReply : [strongSelf trimmedInput];
+        if (source.length > 0) {
+            [strongSelf exportText:source asWord:NO];
+        } else {
+            [strongSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp TXT."];
+        }
     }]];
+    
+    // Tạo hành động xuất tệp DOCX
     [sheet addAction:[UIAlertAction actionWithTitle:@"Tạo tệp DOCX" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *source = lastReply.length > 0 ? lastReply : [weakSelf trimmedInput];
-        if (source.length > 0) [weakSelf exportText:source asWord:YES];
-        else [weakSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp DOCX."];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSString *source = lastReply.length > 0 ? lastReply : [strongSelf trimmedInput];
+        if (source.length > 0) {
+            [strongSelf exportText:source asWord:YES];
+        } else {
+            [strongSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp DOCX."];
+        }
     }]];
+    
+    // Chọn tệp đính kèm
     [sheet addAction:[UIAlertAction actionWithTitle:@"Chọn tệp để đính kèm…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [weakSelf attachTapped];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        [strongSelf attachTapped];
     }]];
+    
+    // Lệnh tạo ảnh nhanh
     [sheet addAction:[UIAlertAction actionWithTitle:@"/tạo ảnh" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        weakSelf.textView.text = @"/tạo ảnh ";
-        [weakSelf textViewDidChange:weakSelf.textView];
-        [weakSelf.textView becomeFirstResponder];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.textView.text = @"/tạo ảnh ";
+        [strongSelf textViewDidChange:strongSelf.textView];
+        [strongSelf.textView becomeFirstResponder];
     }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:[AppSettings webSearchEnabled] ? @"Tắt tìm kiếm web" : @"Bật tìm kiếm web" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) { [weakSelf searchTapped]; }]];
+    
+    // Bật/tắt tìm kiếm web động theo trạng thái AppSettings
+    BOOL isWebSearchActive = [AppSettings webSearchEnabled];
+    NSString *searchActionTitle = isWebSearchActive ? @"Tắt tìm kiếm web" : @"Bật tìm kiếm web";
+    [sheet addAction:[UIAlertAction actionWithTitle:searchActionTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        [strongSelf searchTapped];
+    }]];
+    
+    // Danh sách các dịch vụ bên ngoài yêu cầu OAuth/API
     NSArray *external = @[@"Gmail", @"Google Calendar", @"Google Docs", @"Google Drive", @"Google Home", @"Google Keep", @"Google Photos", @"Google Sheets", @"Google Tasks"];
     for (NSString *name in external) {
         [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [weakSelf showAlertMessage:[NSString stringWithFormat:@"%@ cần kết nối OAuth/API riêng. Phiên bản này chưa có thông tin xác thực để truy cập tài khoản.", name]];
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            [strongSelf showAlertMessage:[NSString stringWithFormat:@"%@ cần kết nối OAuth/API riêng. Phiên bản này chưa có thông tin xác thực để truy cập tài khoản.", name]];
         }]];
     }
+    
+    // Nút hủy
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView = self.mentionButton;
-    sheet.popoverPresentationController.sourceRect = self.mentionButton.bounds;
+    
+    // Cấu hình Popover cho iPad tránh crash
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.mentionButton;
+        sheet.popoverPresentationController.sourceRect = self.mentionButton.bounds;
+        sheet.popoverPresentationController.permittedArrowDirections = UIPopoverArrowDirectionAny;
+    }
+    
     [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)updateDailyTokenPrompt {
     long long used = [AppSettings dailyTokenUsage];
     long long budget = [AppSettings dailyTokenBudget];
-    NSString *usedText = used >= 1000000000LL ? [NSString stringWithFormat:@"%.2fB", used / 1000000000.0] : [NSString stringWithFormat:@"%lld", used];
-    NSString *budgetText = budget >= 1000000000LL ? [NSString stringWithFormat:@"%.0fB", budget / 1000000000.0] : [NSString stringWithFormat:@"%lld", budget];
+    
+    NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
+    formatter.numberStyle = NSNumberFormatterDecimalStyle;
+    
+    NSString *usedText = nil;
+    NSString *budgetText = nil;
+    
+    if (used >= 1000000000LL) {
+        usedText = [NSString stringWithFormat:@"%.2fB", used / 1000000000.0];
+    } else {
+        usedText = [formatter stringFromNumber:@(used)] ?: [NSString stringWithFormat:@"%lld", used];
+    }
+    
+    if (budget >= 1000000000LL) {
+        budgetText = [NSString stringWithFormat:@"%.0fB", budget / 1000000000.0];
+    } else {
+        budgetText = [formatter stringFromNumber:@(budget)] ?: [NSString stringWithFormat:@"%lld", budget];
+    }
+    
     self.navigationItem.prompt = [NSString stringWithFormat:@"Token hôm nay: %@/%@", usedText, budgetText];
 }
 
 - (void)relayoutAnimated {
     [self.view setNeedsLayout];
-    [UIView animateWithDuration:0.15 animations:^{ [self.view layoutIfNeeded]; }];
+    [UIView animateWithDuration:0.15 animations:^{
+        [self.view layoutIfNeeded];
+    }];
 }
 
 #pragma mark - Keyboard
