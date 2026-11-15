@@ -28,7 +28,7 @@
 "err_invalid_key" = "Key không hợp lệ hoặc đã bị thu hồi. Vào Lịch sử › Cài đặt › API key để nhập lại.";
 "err_permission" = "Key chưa có quyền dùng model này, hoặc khu vực của bạn chưa được hỗ trợ. Hãy thử chọn model khác.";
 "err_model_not_found" = "Model này hiện không dùng được với key của bạn. Hãy chạm vào tên model ở trên cùng để chọn model khác.";
-"err_rate" = "Đã vượt hạn mức tạm thời. Hãy đợi ít phút rồi thử lại, hoặc chọn model khác (nhóm Flash thường có gói miễn phí).";
+"err_rate" = "Nhà cung cấp đang từ chối yêu cầu (HTTP 429). Mức 24B trong ứng dụng chỉ là bộ đếm nội bộ, không phải quota của Gemini/Claude. Nếu chi tiết bên dưới báo hết quota theo ngày hoặc hết hạn mức model, hãy chờ quota được làm mới, dùng model khác hoặc bật thanh toán; nếu là giới hạn yêu cầu/phút, hãy đợi theo thời gian nhà cung cấp trả về rồi thử lại.";
 "err_network" = "Không kết nối được mạng. Kiểm tra Wi-Fi/4G rồi thử lại.";
 "err_blocked" = "Gemini từ chối trả lời yêu cầu này (bộ lọc an toàn). Hãy thử diễn đạt khác.";
 "err_empty_reply" = "Gemini không trả về nội dung. Hãy thử lại.";
