@@ -178,6 +178,7 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self abandonStream];
     [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"native"];
 }
 
@@ -1002,9 +1003,11 @@ static NSString *ClippedForLog(NSString *text) {
 }
 
 - (void)openConversationWithId:(NSString *)cid {
+    // Đảm bảo ngắt ngay tiến trình stream đang chạy của cuộc trò chuyện cũ trước khi chuyển
+    [self abandonStream];
+    
     NSMutableDictionary *loaded = [ConversationStore loadConversationWithId:cid];
     if (!loaded) return;
-    [self abandonStream];
     [self discardPendingAttachments];
     self.conversation = loaded;
     NSString *savedModel = loaded[@"model"];
@@ -1277,9 +1280,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 - (void)sendTapped {
     if (self.streaming) {
-        [self.stream cancel];
+        [self abandonStream];
         return;
     }
+    
+    // Kiểm tra hạn mức tuần 1T trước khi gửi
+    if ([AppSettings isWeeklyBudgetExhausted]) {
+        [self showAlertMessage:@"Bạn đã sử dụng hết hạn mức 1T trong tuần này (Thứ Hai đến Chủ Nhật). Vui lòng chờ sang tuần sau khi hệ thống tự động reset để tiếp tục sử dụng." title:@"Đã đạt giới hạn tuần"];
+        return;
+    }
+
     NSString *text = [self trimmedInput];
     BOOL hasAttachments = self.pendingAttachments.count > 0;
     if ((text.length == 0 && !hasAttachments) || !self.webReady || self.importsInFlight > 0) return;
@@ -1460,7 +1470,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Nới lỏng hoàn toàn giới hạn lịch sử, lấy toàn bộ lịch sử trò chuyện (vô thời hạn theo server API)
     return turns;
 }
 
@@ -1617,7 +1626,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
-    // Xử lý lỗi 429 (Rate Limit) và quá tải server với cơ chế thử lại tự động tăng dần thời gian chờ (Exponential Backoff)
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
     if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 5) {
@@ -1730,11 +1738,17 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 }
 
 - (void)abandonStream {
-    if (!self.stream) return;
+    if (!self.stream) {
+        self.streaming = NO;
+        [self updateSendButton];
+        return;
+    }
     NSString *partial = [self.streamBuffer copy] ?: @"";
     id<ChatStreaming> old = self.stream;
     old.onDelta = nil;
     old.onFinish = nil;
+    old.onImage = nil;
+    old.onUsage = nil;
     self.stream = nil;
     self.streamBuffer = nil;
     self.streaming = NO;
@@ -1742,6 +1756,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
     if (partial.length > 0 || generatedAttachments.count > 0) [self appendAssistantMessage:partial attachments:generatedAttachments];
     self.streamGeneratedAttachments = nil;
+    [self callJS:@"end" args:@[partial]];
     [self updateSendButton];
 }
 
