@@ -1611,7 +1611,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
     AIProvider currentProvider = [Provider forModelId:self.model];
-    BOOL largeClaudeReply = currentProvider == AIProviderClaude && [AppSettings maxOutputTokens] > 21333;
 
     BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
     NSString *fastErrorText = [detail lowercaseString] ?: @"";
@@ -1640,7 +1639,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        // Giảm thời gian chờ retry xuống nhanh hơn để kết nối lại tức thì
         NSTimeInterval delay = MAX(providerDelay > 0 ? providerDelay : 1.0, MIN(10.0, (double)self.streamRetryCount));
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
@@ -1714,11 +1712,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self.pendingAttachments removeAllObjects];
 
     NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
-    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
+    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSString class]] ? [target[@"attachments"] copy] : @[];
 
     for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
         if (i != index) {
-            NSArray *laterAttachments = [messages[(NSUInteger)i][^"attachments"] isKindOfClass:[NSArray class]]
+            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
                 ? messages[(NSUInteger)i][@"attachments"] : @[];
             for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
         }
