@@ -270,25 +270,40 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 + (long long)dailyTokenUsage {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *today = TodayKey();
+
     if (![[defaults stringForKey:kDailyDateKey] isEqualToString:today]) {
         [defaults setObject:today forKey:kDailyDateKey];
         [defaults setObject:@0 forKey:kDailyUsageKey];
         return 0;
     }
-    return [defaults objectForKey:kDailyUsageKey] ? [defaults longLongForKey:kDailyUsageKey] : 0;
+
+    id usageObject = [defaults objectForKey:kDailyUsageKey];
+    return usageObject ? [usageObject longLongValue] : 0;
 }
+
 + (void)addDailyTokenUsage:(long long)count {
     if (count <= 0) return;
+
     long long current = [self dailyTokenUsage];
-    if (LLONG_MAX - current < count) current = LLONG_MAX; else current += count;
+
+    if (LLONG_MAX - current < count)
+        current = LLONG_MAX;
+    else
+        current += count;
+
     [[NSUserDefaults standardUserDefaults] setObject:@(current) forKey:kDailyUsageKey];
 }
+
 + (long long)dailyTokenBudget {
-    long long value = [[NSUserDefaults standardUserDefaults] longLongForKey:kDailyBudgetKey];
+    id budgetObject = [[NSUserDefaults standardUserDefaults] objectForKey:kDailyBudgetKey];
+    long long value = [budgetObject longLongValue];
+
     return value > 0 ? value : 27000000000LL;
 }
+
 + (void)setDailyTokenBudget:(long long)count {
     if (count < 1) count = 27000000000LL;
+
     [[NSUserDefaults standardUserDefaults] setObject:@(count) forKey:kDailyBudgetKey];
 }
 
