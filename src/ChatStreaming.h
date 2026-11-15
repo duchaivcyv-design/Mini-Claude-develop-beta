@@ -27,9 +27,11 @@ typedef NS_ENUM(NSInteger, GeminiStreamError) {   // (name kept from the first v
 
 // YES (default): live stream (Server-Sent Events). NO: one normal request/response, delivered as a single delta.
 @property (assign, nonatomic) BOOL useStreaming;
+@property (assign, nonatomic) NSTimeInterval retryAfterSeconds; // HTTP Retry-After, when supplied by the provider
 
 @property (copy, nonatomic) void (^onDelta)(NSString *text);
 @property (copy, nonatomic) void (^onImage)(NSData *data, NSString *mimeType);
+@property (copy, nonatomic) void (^onUsage)(long long inputTokens, long long outputTokens);
 @property (copy, nonatomic) void (^onFinish)(GeminiStreamError error, NSInteger httpStatus, NSString *detail);
 
 - (void)start;
