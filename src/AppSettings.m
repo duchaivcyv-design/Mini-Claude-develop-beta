@@ -247,10 +247,10 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 }
 + (NSUInteger)contextLimitChars {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
-    return (value >= 1000 && value <= 1000000) ? (NSUInteger)value : 600000;
+    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    if (count < 1000 || count > 1000000) count = 600000;
+    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
 }
 
@@ -298,11 +298,11 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     id budgetObject = [[NSUserDefaults standardUserDefaults] objectForKey:kDailyBudgetKey];
     long long value = [budgetObject longLongValue];
 
-    return value > 0 ? value : 27000000000LL;
+    return value > 0 ? value : 24000000000LL;
 }
 
 + (void)setDailyTokenBudget:(long long)count {
-    if (count < 1) count = 27000000000LL;
+    if (count < 1) count = 24000000000LL;
 
     [[NSUserDefaults standardUserDefaults] setObject:@(count) forKey:kDailyBudgetKey];
 }
