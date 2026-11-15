@@ -258,3 +258,5 @@ body {
 /* math */
 .md .katex { font-size: 1.05em; }
 .md .katex-display { margin: .9em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; -webkit-overflow-scrolling: touch; }
+
+.thinking-label { color: var(--muted, #888); font-size: 12px; margin: 4px 0 6px 2px; opacity: .9; }
