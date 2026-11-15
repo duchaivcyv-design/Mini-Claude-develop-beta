@@ -71,11 +71,12 @@ static NSString *CacheKeyFor(AIProvider provider) {
 
 + (BOOL)isLikelyFreeModelId:(NSString *)modelId {
     NSString *lower = [modelId lowercaseString];
-    // Chấp nhận tất cả các model có flash, nano hoặc phiên bản mới
+    // Chấp nhận tất cả các model thuộc họ flash, nano hoặc có tiền tố gemini/nano
     if ([lower rangeOfString:@"flash"].location != NSNotFound || 
         [lower rangeOfString:@"nano"].location != NSNotFound ||
         [lower rangeOfString:@"gemini-"].location != NSNotFound) {
-        // Các biến thể thu phí nặng (nếu cần lọc, tuỳ chỉnh ở đây)
+        
+        // Các biến thể thu phí nặng (nếu có thể tùy chỉnh chặn ở đây)
         NSArray *paidVariants = @[@"omni-locked"];
         for (NSString *token in paidVariants) {
             if ([lower rangeOfString:token].location != NSNotFound) return NO;
