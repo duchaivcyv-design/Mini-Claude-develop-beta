@@ -27,6 +27,15 @@ xcrun --sdk iphoneos clang \
   -framework UIKit -framework Foundation -framework Security -framework WebKit -framework ImageIO -framework AVFoundation -framework CoreMedia -lz \
   -o "$APPDIR/$APP"
 
+echo "==> Compiling the icon helper (setuid root in the .deb only)"
+xcrun --sdk iphoneos clang \
+  -arch arm64 \
+  -miphoneos-version-min=12.0 \
+  -isysroot "$SDK" \
+  -O2 -Wall \
+  tools/iconhelper.c \
+  -o "$OUT/claudemini-icon"
+
 echo "==> Assembling bundle"
 cp app/Info.plist "$APPDIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APPDIR/Info.plist"
@@ -35,8 +44,11 @@ cp -R app/Resources/. "$APPDIR/"
 printf 'APPL????' > "$APPDIR/PkgInfo"
 find "$OUT" -name '.DS_Store' -delete
 
+cp "$OUT/claudemini-icon" "$APPDIR/claudemini-icon"
+
 echo "==> Pseudo-signing with ldid"
 ldid -Sapp/entitlements.plist "$APPDIR/$APP"
+ldid -Sapp/entitlements-helper.plist "$APPDIR/claudemini-icon"
 
 echo "==> Packaging .deb"
 mkdir -p "$OUT/pkg/DEBIAN"
@@ -46,6 +58,7 @@ chmod 755 "$OUT/pkg/DEBIAN/postinst" "$OUT/pkg/DEBIAN/postrm"
 find "$OUT/pkg/Applications" -type d -exec chmod 755 {} +
 find "$OUT/pkg/Applications" -type f -exec chmod 644 {} +
 chmod 755 "$APPDIR/$APP"
+chmod 4755 "$APPDIR/claudemini-icon"   # setuid root: lets the app swap its Home Screen icon (owner is root inside the .deb)
 
 export COPYFILE_DISABLE=1
 DEB="$DIST/${BUNDLE_ID}_${VERSION}_iphoneos-arm.deb"

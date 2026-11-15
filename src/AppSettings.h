@@ -1,43 +1,34 @@
 #import <Foundation/Foundation.h>
 
-NS_ASSUME_NONNULL_BEGIN
+extern const NSUInteger kMaxSystemPromptChars;
 
 typedef NS_ENUM(NSInteger, AIReasoningLevel) {
     AIReasoningLevelLow = 0,
     AIReasoningLevelMedium,
     AIReasoningLevelHigh,
     AIReasoningLevelVeryHigh,
-    AIReasoningLevelUltra,
     AIReasoningLevelMax
 };
 
-// Khai báo hằng số giới hạn ký tự system prompt mà các file khác đang sử dụng
-FOUNDATION_EXPORT const NSUInteger kMaxSystemPromptChars;
-
 @interface AppSettings : NSObject
 
-+ (NSString *)cleanedPrompt:(NSString *)text;
 + (NSString *)systemPrompt;
 + (void)setSystemPrompt:(NSString *)prompt;
-
++ (NSString *)cleanedPrompt:(NSString *)text;
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget;
 + (NSString *)promptText:(NSString *)prompt forQuery:(NSString *)query characterBudget:(NSUInteger)budget;
 
 + (NSInteger)attachmentMemory;
 + (void)setAttachmentMemory:(NSInteger)count;
-
 + (NSInteger)maxOutputTokens;
 + (void)setMaxOutputTokens:(NSInteger)count;
-
 + (NSUInteger)contextLimitChars;
 + (void)setContextLimitChars:(NSUInteger)count;
 
 + (AIReasoningLevel)reasoningLevel;
 + (void)setReasoningLevel:(AIReasoningLevel)level;
-
 + (BOOL)fastModeEnabled;
 + (void)setFastModeEnabled:(BOOL)enabled;
-
 + (BOOL)webSearchEnabled;
 + (void)setWebSearchEnabled:(BOOL)enabled;
 
@@ -46,14 +37,4 @@ FOUNDATION_EXPORT const NSUInteger kMaxSystemPromptChars;
 + (long long)dailyTokenBudget;
 + (void)setDailyTokenBudget:(long long)count;
 
-// Quản lý hạn mức tuần (1T)
-+ (long long)weeklyTokenUsage;
-+ (long long)weeklyTokenBudget;
-+ (BOOL)isWeeklyBudgetExhausted;
-+ (CGFloat)weeklyUsagePercentage;
-
 @end
-
-NS_ASSUME_NONNULL_END
-
-

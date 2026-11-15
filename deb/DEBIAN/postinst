@@ -1,5 +1,8 @@
 #!/bin/sh
 # Register the app with SpringBoard so the icon appears on the Home Screen.
 chmod 755 /Applications/ClaudeMini.app/ClaudeMini 2>/dev/null
+# icon helper: root-owned, setuid (lets the app switch its Home Screen icon)
+chown root:wheel /Applications/ClaudeMini.app/claudemini-icon 2>/dev/null
+chmod 4755 /Applications/ClaudeMini.app/claudemini-icon 2>/dev/null
 uicache >/dev/null 2>&1 || true
 exit 0

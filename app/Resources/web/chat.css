@@ -1,11 +1,18 @@
+/* Skin variables. Defaults = the original Claude look; the app injects the chosen skin in <style id="themevars"> after this sheet. */
+:root {
+  --bg: #FAF9F5; --text: #29261B; --sec: #6F6B5E; --border: #E3E0D5; --sel: #F0EEE6; --bubble: #F0EEE6;
+  --accent: #C96442; --onaccent: #FFFFFF; --link: #C96442; --card: rgba(255,255,255,.9); --code-bg: #F6F4EC;
+  --err-bg: #FCEDEA; --err-border: #EBC4BB; --err-text: #8F2F1D; --toast-bg: #29261B; --toast-fg: #FFFFFF;
+  --hl-kw: #A5472B; --hl-str: #3F7D58; --hl-com: #8A8677; --hl-num: #2F6B8C; --hl-title: #7B4FA2; --hl-attr: #B0731A;
+}
 html, body {
   margin: 0;
   padding: 0;
-  background: #FAF9F5;
+  background: transparent;
   -webkit-text-size-adjust: 100%;
 }
 body {
-  color: #29261B;
+  color: var(--text);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
@@ -21,7 +28,7 @@ body {
 .row.user { display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column; -webkit-align-items: flex-end; align-items: flex-end; }
 .row.user .actions { max-width: 88%; text-align: right; }
 .bubble {
-  background: #F0EEE6;
+  background: var(--bubble);
   border-radius: 18px;
   padding: 10px 14px;
   max-width: 88%;
@@ -42,15 +49,15 @@ body {
   object-fit: cover;
   border-radius: 10px;
   margin: 0 6px 6px 0;
-  background: #E3E0D5;
+  background: var(--border);
 }
 .file {
   display: -webkit-flex;
   display: flex;
   -webkit-align-items: center;
   align-items: center;
-  background: #FAF9F5;
-  border: 1px solid #E3E0D5;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 6px 10px;
   margin: 0 6px 6px 0;
@@ -60,8 +67,8 @@ body {
 .file .ext {
   font-size: 11px;
   font-weight: 700;
-  color: #FFFFFF;
-  background: #C96442;
+  color: var(--onaccent);
+  background: var(--accent);
   border-radius: 5px;
   padding: 2px 5px;
   margin-right: 8px;
@@ -78,7 +85,7 @@ body {
 
 /* assistant message: plain serif text, like Claude */
 .assistant-media { margin: 0 0 10px 0; }
-.generated-image { display: block; width: auto; max-width: 100%; max-height: 420px; border-radius: 12px; background: #F0EEE6; object-fit: contain; }
+.generated-image { display: block; width: auto; max-width: 100%; max-height: 420px; border-radius: 12px; background: var(--sel); object-fit: contain; }
 .row.assistant .body {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 17.5px;
@@ -94,7 +101,7 @@ body {
   height: 10px;
   margin-left: 3px;
   border-radius: 50%;
-  background: #C96442;
+  background: var(--accent);
   vertical-align: middle;
   -webkit-animation: pulse 1s ease-in-out infinite;
   animation: pulse 1s ease-in-out infinite;
@@ -107,9 +114,9 @@ body {
 .act {
   -webkit-appearance: none;
   appearance: none;
-  border: 1px solid #E3E0D5;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #6F6B5E;
+  color: var(--sec);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
   font-size: 13px;
   padding: 5px 11px;
@@ -118,20 +125,20 @@ body {
   -webkit-user-select: none;
   user-select: none;
 }
-.act:active { background: #F0EEE6; }
+.act:active { background: var(--sel); }
 
 /* error card */
 .row.error {
-  background: #FCEDEA;
-  border: 1px solid #EBC4BB;
+  background: var(--err-bg);
+  border: 1px solid var(--err-border);
   border-radius: 12px;
   padding: 12px 14px;
-  color: #8F2F1D;
+  color: var(--err-text);
   font-size: 15px;
   line-height: 1.45;
 }
 .errtext { white-space: pre-wrap; word-wrap: break-word; }
-.row.error .retry { margin-top: 10px; margin-right: 0; border-color: #D9A99D; color: #8F2F1D; }
+.row.error .retry { margin-top: 10px; margin-right: 0; border-color: var(--err-border); color: var(--err-text); }
 
 /* empty state */
 .empty { text-align: center; padding-top: 14vh; }
@@ -149,7 +156,7 @@ body {
   font-weight: 600;
   margin: 0 0 6px 0;
 }
-.empty p { margin: 0; color: #6F6B5E; font-size: 16px; }
+.empty p { margin: 0; color: var(--sec); font-size: 16px; }
 
 /* toast */
 #toast {
@@ -158,8 +165,8 @@ body {
   bottom: 16px;
   -webkit-transform: translateX(-50%);
   transform: translateX(-50%);
-  background: #29261B;
-  color: #FFFFFF;
+  background: var(--toast-bg);
+  color: var(--toast-fg);
   padding: 8px 14px;
   border-radius: 16px;
   font-size: 14px;
@@ -191,15 +198,15 @@ body {
 .md blockquote {
   margin: .8em 0;
   padding: .1em 0 .1em 14px;
-  border-left: 3px solid #E3E0D5;
-  color: #6F6B5E;
+  border-left: 3px solid var(--border);
+  color: var(--sec);
 }
-.md hr { border: 0; border-top: 1px solid #E3E0D5; margin: 1.2em 0; }
-.md a { color: #C96442; text-decoration: underline; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
+.md a { color: var(--link); text-decoration: underline; }
 .md code {
   font-family: Menlo, Courier, monospace;
   font-size: .86em;
-  background: #F0EEE6;
+  background: var(--sel);
   padding: 1px 5px;
   border-radius: 5px;
 }
@@ -207,14 +214,14 @@ body {
 /* tables scroll sideways instead of breaking the page */
 .md .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: .8em 0; }
 .md table { border-collapse: collapse; font-size: .92em; min-width: 100%; }
-.md th, .md td { border: 1px solid #E3E0D5; padding: 6px 10px; text-align: left; vertical-align: top; }
-.md th { background: #F0EEE6; font-weight: 600; }
+.md th, .md td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--sel); font-weight: 600; }
 
 /* code blocks */
 .md .codeblock {
   margin: .9em 0;
-  background: #F6F4EC;
-  border: 1px solid #E3E0D5;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -226,11 +233,11 @@ body {
   -webkit-align-items: center;
   align-items: center;
   padding: 5px 8px 5px 12px;
-  border-bottom: 1px solid #E3E0D5;
-  background: #F0EEE6;
+  border-bottom: 1px solid var(--border);
+  background: var(--sel);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
 }
-.md .codehead .lang { font-size: 12px; color: #6F6B5E; text-transform: lowercase; }
+.md .codehead .lang { font-size: 12px; color: var(--sec); text-transform: lowercase; }
 .md .codehead .act { padding: 3px 9px; margin: 0; font-size: 12px; }
 .md .codeblock pre { margin: 0; padding: 10px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .md .codeblock code {
@@ -242,16 +249,16 @@ body {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre;
-  color: #29261B;
+  color: var(--text);
 }
 
 /* syntax colors (warm, low contrast, like the page) */
-.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section, .hljs-doctag, .hljs-type, .hljs-name { color: #A5472B; }
-.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #3F7D58; }
-.hljs-comment, .hljs-quote, .hljs-deletion { color: #8A8677; font-style: italic; }
-.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable, .hljs-link { color: #2F6B8C; }
-.hljs-title, .hljs-title.function_, .hljs-function .hljs-title, .hljs-class .hljs-title { color: #7B4FA2; }
-.hljs-built_in, .hljs-params, .hljs-attr, .hljs-selector-id, .hljs-selector-class, .hljs-meta { color: #B0731A; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section, .hljs-doctag, .hljs-type, .hljs-name { color: var(--hl-kw); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: var(--hl-str); }
+.hljs-comment, .hljs-quote, .hljs-deletion { color: var(--hl-com); font-style: italic; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable, .hljs-link { color: var(--hl-num); }
+.hljs-title, .hljs-title.function_, .hljs-function .hljs-title, .hljs-class .hljs-title { color: var(--hl-title); }
+.hljs-built_in, .hljs-params, .hljs-attr, .hljs-selector-id, .hljs-selector-class, .hljs-meta { color: var(--hl-attr); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: bold; }
 
@@ -259,4 +266,4 @@ body {
 .md .katex { font-size: 1.05em; }
 .md .katex-display { margin: .9em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; -webkit-overflow-scrolling: touch; }
 
-.thinking-label { color: var(--muted, #888); font-size: 12px; margin: 4px 0 6px 2px; opacity: .9; }
+.thinking-label { color: var(--sec); font-size: 12px; margin: 4px 0 6px 2px; opacity: .9; }

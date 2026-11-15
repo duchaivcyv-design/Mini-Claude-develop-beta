@@ -25,6 +25,8 @@ mkdir -p "$WORK/Payload" "$OUT_DIR"
 cp -R "$APP_SRC" "$WORK/Payload/$APP_NAME.app"
 find "$WORK" -name '.DS_Store' -delete
 
+rm -f "$WORK/Payload/$APP_NAME.app/claudemini-icon"   # the root helper is for the rootful .deb only
+
 echo "==> Re-signing the binary for the .ipa (sandboxed app entitlements)"
 ldid -Sapp/entitlements-ipa.plist "$WORK/Payload/$APP_NAME.app/$APP_NAME"
 

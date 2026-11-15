@@ -96,6 +96,7 @@ typedef NS_ENUM(NSInteger, StatusKind) {
     self.keyField.placeholder = [self placeholderText];
     self.keyField.font = [UIFont systemFontOfSize:16];
     self.keyField.textColor = [Theme text];
+    self.keyField.keyboardAppearance = [Theme keyboardAppearance];
     self.keyField.secureTextEntry = YES;
     self.keyField.autocapitalizationType = UITextAutocapitalizationTypeNone;
     self.keyField.autocorrectionType = UITextAutocorrectionTypeNo;

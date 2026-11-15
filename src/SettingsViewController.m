@@ -7,14 +7,14 @@
 #import "RootViewController.h"
 #import "SystemPromptViewController.h"
 #import "DiagnosticsViewController.h"
+#import "AppearanceViewController.h"
 
+// Order on screen: look & language on top, then the API keys, then how the AI behaves, then data & info.
 typedef NS_ENUM(NSInteger, SettingsSection) {
-    SettingsSectionKeys = 0,
+    SettingsSectionLook = 0,
+    SettingsSectionKeys,
     SettingsSectionAssistant,
-    SettingsSectionTokenUsage, // Thêm section hiển thị token
-    SettingsSectionGeneral,
-    SettingsSectionHistory,
-    SettingsSectionAbout,
+    SettingsSectionData,
     SettingsSectionCount
 };
 
@@ -37,11 +37,24 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     self.tableView.backgroundColor = [Theme background];
     self.tableView.separatorColor = [Theme border];
     [self.view addSubview:self.tableView];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)applyTheme {
+    self.view.backgroundColor = [Theme background];
+    self.tableView.backgroundColor = [Theme background];
+    self.tableView.separatorColor = [Theme border];
+    [self.tableView reloadData];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.tableView reloadData];
+    [self.tableView reloadData];   // keys / system prompt may have changed on the next screen
 }
 
 #pragma mark - Helpers
@@ -51,6 +64,12 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     if (key.length == 0) return L(@"api_key_none");
     NSString *tail = key.length > 4 ? [key substringFromIndex:key.length - 4] : key;
     return [@"\u2022\u2022\u2022\u2022" stringByAppendingString:tail];
+}
+
+- (NSString *)appearanceSummary {
+    NSString *name = [Theme skinName:[Theme skin]];
+    if ([Theme autoMode]) return [NSString stringWithFormat:@"%@ \u00B7 %@", name, L(@"mode_auto")];
+    return [Theme darkMode] ? [NSString stringWithFormat:@"%@ \u00B7 %@", name, L(@"appearance_dark_short")] : name;
 }
 
 - (NSString *)languageName {
@@ -67,23 +86,24 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == SettingsSectionKeys || section == SettingsSectionAbout) return 2;
+    if (section == SettingsSectionLook || section == SettingsSectionKeys) return 2;   // look, language / Gemini key, Claude key
     if (section == SettingsSectionAssistant) return 4;
-    if (section == SettingsSectionTokenUsage) return 2; // 1 dòng cho ngày, 1 dòng cho tuần
-    return 1;
+    return 3;   // data: clear history, version, diagnostics
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    if (section == SettingsSectionKeys) return L(@"keys_header");
-    if (section == SettingsSectionTokenUsage) return @"THỐNG KÊ TOKEN SỬ DỤNG";
-    return nil;
+    switch (section) {
+        case SettingsSectionLook:      return L(@"settings_header_look");
+        case SettingsSectionKeys:      return L(@"settings_header_keys");
+        case SettingsSectionAssistant: return L(@"settings_header_ai");
+        default:                       return L(@"settings_header_data");
+    }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == SettingsSectionKeys) return L(@"keys_footer");
     if (section == SettingsSectionAssistant) return L(@"attach_memory_footer");
-    if (section == SettingsSectionTokenUsage) return @"Hạn mức ngày: 24B (Reset mỗi ngày). Hạn mức tuần: 1T tính từ Thứ Hai đến Chủ Nhật.";
-    if (section == SettingsSectionAbout) return L(@"privacy_footer");
+    if (section == SettingsSectionData) return L(@"privacy_footer");
     return nil;
 }
 
@@ -92,9 +112,8 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     cell.backgroundColor = [Theme surface];
     cell.textLabel.font = [UIFont systemFontOfSize:17];
     cell.textLabel.textColor = [Theme text];
-    cell.detailTextLabel.font = [UIFont systemFontOfSize:15];
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:16];
     cell.detailTextLabel.textColor = [Theme secondaryText];
-    cell.selectionStyle = UITableViewCellSelectionStyleNone; // Mặc định các ô thống kê không cần bấm chọn
 
     switch (indexPath.section) {
         case SettingsSectionKeys: {
@@ -102,7 +121,6 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             cell.textLabel.text = provider == AIProviderClaude ? L(@"api_key_claude") : L(@"api_key_gemini");
             cell.detailTextLabel.text = [self maskedKeyFor:provider];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         }
         case SettingsSectionAssistant:
@@ -120,40 +138,28 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
                 cell.detailTextLabel.text = [self contextMemoryName];
             }
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
-        case SettingsSectionTokenUsage: {
+        case SettingsSectionLook:
             if (indexPath.row == 0) {
-                cell.textLabel.text = @"Token hôm nay (Ngày)";
-                long long used = [AppSettings dailyTokenUsage];
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"%lld / 24B", used];
+                cell.textLabel.text = L(@"settings_row_look");
+                cell.detailTextLabel.text = [self appearanceSummary];
             } else {
-                cell.textLabel.text = @"Token tuần này (Thứ 2 - CN)";
-                long long used = [AppSettings weeklyTokenUsage];
-                CGFloat percent = [AppSettings weeklyUsagePercentage];
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f%% (1T)", percent];
+                cell.textLabel.text = L(@"language");
+                cell.detailTextLabel.text = [self languageName];
             }
-            break;
-        }
-        case SettingsSectionGeneral:
-            cell.textLabel.text = L(@"language");
-            cell.detailTextLabel.text = [self languageName];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
-        case SettingsSectionHistory:
-            cell.textLabel.text = L(@"clear_history");
-            cell.textLabel.textColor = [Theme error];
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-            break;
-        default:
+        default:   // SettingsSectionData
             if (indexPath.row == 0) {
+                cell.textLabel.text = L(@"clear_history");
+                cell.textLabel.textColor = [Theme error];
+            } else if (indexPath.row == 1) {
                 cell.textLabel.text = L(@"version");
                 cell.detailTextLabel.text = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+                cell.selectionStyle = UITableViewCellSelectionStyleNone;
             } else {
                 cell.textLabel.text = L(@"diagnostics_title");
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             }
             break;
     }
@@ -161,6 +167,14 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 #pragma mark - UITableViewDelegate
+
+- (void)tableView:(UITableView *)tableView willDisplayHeaderView:(UIView *)view forSection:(NSInteger)section {
+    if ([view isKindOfClass:[UITableViewHeaderFooterView class]]) ((UITableViewHeaderFooterView *)view).textLabel.textColor = [Theme secondaryText];
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section {
+    if ([view isKindOfClass:[UITableViewHeaderFooterView class]]) ((UITableViewHeaderFooterView *)view).textLabel.textColor = [Theme secondaryText];
+}
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
@@ -183,14 +197,19 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
                 [self chooseContextMemory];
             }
             break;
-        case SettingsSectionGeneral:
-            [self chooseLanguage];
+        case SettingsSectionLook:
+            if (indexPath.row == 0) {
+                [self.navigationController pushViewController:[[AppearanceViewController alloc] init] animated:YES];
+            } else {
+                [self chooseLanguage];
+            }
             break;
-        case SettingsSectionHistory:
-            [self confirmClearHistory];
-            break;
-        default:
-            if (indexPath.row == 1) [self.navigationController pushViewController:[[DiagnosticsViewController alloc] init] animated:YES];
+        default:   // SettingsSectionData
+            if (indexPath.row == 0) {
+                [self confirmClearHistory];
+            } else if (indexPath.row == 2) {
+                [self.navigationController pushViewController:[[DiagnosticsViewController alloc] init] animated:YES];
+            }
             break;
     }
 }
@@ -208,8 +227,39 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
 }
 
+
+- (NSString *)reasoningLevelName {
+    switch ([AppSettings reasoningLevel]) {
+        case AIReasoningLevelLow: return @"Thấp";
+        case AIReasoningLevelMedium: return @"Trung bình";
+        case AIReasoningLevelHigh: return @"Cao";
+        case AIReasoningLevelVeryHigh: return @"Siêu cao";
+        case AIReasoningLevelMax: return @"MAX ×8 (nếu model hỗ trợ)";
+    }
+    return @"Trung bình";
+}
+
+- (void)chooseReasoningLevel {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Mức suy luận AI"
+                                                                   message:@"Mức thực tế phụ thuộc model và API. MAX ×8 không thể vượt giới hạn nhà cung cấp."
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8 (nếu model hỗ trợ)"];
+    __weak typeof(self) weakSelf = self;
+    [names enumerateObjectsUsingBlock:^(NSString *name, NSUInteger idx, BOOL *stop) {
+        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setReasoningLevel:(AIReasoningLevel)idx];
+            [weakSelf.tableView reloadData];
+        }]];
+    }];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:4 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
 - (NSString *)contextMemoryName {
-    return @"Vô thời hạn (Tùy server API)";
+    return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
 }
 
 - (void)chooseOutputTokens {
@@ -234,13 +284,19 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (void)chooseContextMemory {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
-                                                                   message:@"Lịch sử trò chuyện gửi cho AI đã được thiết lập vô thời hạn, tự động mở rộng theo khả năng đáp ứng của server API."
+                                                                   message:L(@"context_memory_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
+                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
+                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
     __weak typeof(self) weakSelf = self;
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Đã hiểu (Vô thời hạn)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [AppSettings setContextLimitChars:200000000];
-        [weakSelf.tableView reloadData];
-    }]];
+    for (NSArray *option in options) {
+        NSUInteger value = [option[0] unsignedIntegerValue];
+        [sheet addAction:[UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setContextLimitChars:value];
+            [weakSelf.tableView reloadData];
+        }]];
+    }
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
     NSIndexPath *path = [NSIndexPath indexPathForRow:3 inSection:SettingsSectionAssistant];
     sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
@@ -249,7 +305,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (void)chooseAttachmentMemory {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_title")
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_memory_title")
                                                                    message:nil
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     NSArray *options = @[ @[@1, L(@"attach_memory_1")], @[@3, L(@"attach_memory_3")], @[@0, L(@"attach_memory_all")] ];
@@ -280,12 +336,13 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         UIAlertAction *action = [UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
             if ([[Loc preference] isEqualToString:value]) return;
             [Loc setPreference:value];
+            // The app rebuilds its screens in the new language (the open chat starts fresh).
             [[NSNotificationCenter defaultCenter] postNotificationName:kNotifLanguageChanged object:nil];
         }];
         [sheet addAction:action];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
-    NSIndexPath *path = [NSIndexPath indexPathForRow:0 inSection:SettingsSectionGeneral];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:1 inSection:SettingsSectionLook];
     sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
     sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
     [self presentViewController:sheet animated:YES completion:nil];

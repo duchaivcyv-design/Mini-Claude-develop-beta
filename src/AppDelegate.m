@@ -15,8 +15,13 @@
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     [DiagnosticLog logLaunch];
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.window.backgroundColor = [Theme background];
+    [self applyThemeToWindow];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [Theme reapplyHelperIconIfNeeded]; });
 
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(themeChanged)
+                                                 name:kNotifThemeChanged
+                                               object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(applyKeyState)
                                                  name:kNotifKeyChanged
@@ -26,9 +31,40 @@
                                                  name:kNotifLanguageChanged
                                                object:nil];
 
+    [NSTimer scheduledTimerWithTimeInterval:60 target:self selector:@selector(autoThemeTick) userInfo:nil repeats:YES];
+
     [self applyKeyState];
     [self.window makeKeyAndVisible];
     return YES;
+}
+
+// Window colours follow the chosen skin. On iOS 13+ the window also switches system controls (alerts, pickers) to dark.
+- (void)applyThemeToWindow {
+    self.window.backgroundColor = [Theme background];
+    self.window.tintColor = [Theme accent];
+    if (@available(iOS 13.0, *)) {
+        self.window.overrideUserInterfaceStyle = [Theme darkMode] ? UIUserInterfaceStyleDark : UIUserInterfaceStyleLight;
+    }
+}
+
+// Auto dark mode follows the device clock: check when the app comes back and once a minute while it is open.
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    [self autoThemeTick];
+}
+
+- (void)autoThemeTick {
+    if ([Theme consumeAutoModeChange]) [Theme postChange];
+}
+
+// The skin, dark mode or wallpaper changed in Settings: restyle in place (the open chat is kept).
+- (void)themeChanged {
+    [self applyThemeToWindow];
+    UIViewController *root = self.window.rootViewController;
+    if ([root isKindOfClass:[UINavigationController class]]) {
+        UINavigationController *nav = (UINavigationController *)root;
+        [Theme styleNavigationBar:nav.navigationBar];
+        [nav setNeedsStatusBarAppearanceUpdate];
+    }
 }
 
 // Key present -> chat. No key -> key screen.

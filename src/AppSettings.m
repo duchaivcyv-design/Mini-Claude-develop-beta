@@ -13,10 +13,8 @@ static NSString *const kDailyUsageKey = @"dailyTokenUsage";
 static NSString *const kDailyDateKey = @"dailyTokenUsageDate";
 static NSString *const kDailyBudgetKey = @"dailyTokenBudget";
 
-// Khóa lưu trữ thống kê tuần (Thứ Hai đến Chủ Nhật)
-static NSString *const kWeeklyUsageKey = @"weeklyTokenUsage";
-static NSString *const kWeeklyWeekKey = @"weeklyTokenUsageWeek";
-
+// Keep a single in-memory copy and chunk index so a 100k-1M character prompt is
+// not re-read and re-split for every chat turn. Cache is invalidated on save.
 static NSString *gPromptTextCache = nil;
 static BOOL gPromptTextCacheLoaded = NO;
 static NSString *gPromptChunkSource = nil;
@@ -40,14 +38,6 @@ static NSString *TodayKey(void) {
     formatter.timeZone = [NSTimeZone localTimeZone];
     formatter.dateFormat = @"yyyy-MM-dd";
     return [formatter stringFromDate:[NSDate date]];
-}
-
-// Hàm lấy định danh tuần (Năm - Số tuần, tính từ Thứ Hai)
-static NSString *CurrentWeekKey(void) {
-    NSCalendar *calendar = [NSCalendar currentCalendar];
-    calendar.firstWeekday = 2; // Thứ Hai là ngày đầu tuần
-    NSDateComponents *comps = [calendar components:NSCalendarUnitYearForWeekOfYear | NSCalendarUnitWeekOfYear fromDate:[NSDate date]];
-    return [NSString stringWithFormat:@"%ld-W%ld", (long)comps.yearForWeekOfYear, (long)comps.weekOfYear];
 }
 
 static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
@@ -110,6 +100,7 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         if (fromFile.length > 0) {
             gPromptTextCache = [[self cleanedPrompt:fromFile] copy];
         } else {
+            // Migrate prompts saved by versions that stored the whole string in NSUserDefaults.
             NSString *legacy = [[NSUserDefaults standardUserDefaults] stringForKey:kSystemPromptKey];
             if (legacy.length > 0) {
                 gPromptTextCache = [[self cleanedPrompt:legacy] copy];
@@ -145,6 +136,8 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [defaults synchronize];
 }
 
+// Keep the full 1M-character instruction file locally, but send only relevant excerpts
+// that fit the selected model's input window. This avoids oversized requests and 503s.
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget {
     return [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
 }
@@ -174,6 +167,7 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     NSUInteger reserve = MIN((NSUInteger)2400, MAX((NSUInteger)800, budget / 12));
     NSUInteger used = 0;
 
+    // Keep opening instructions plus a small final section, then select relevant chunks.
     [selected addIndex:0];
     used = [chunks[0][@"length"] unsignedIntegerValue];
     if (chunks.count > 1) {
@@ -208,6 +202,7 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         used += length;
     }
 
+    // If the query has no useful overlap, fill the remaining budget from newest chunks backwards.
     if (terms.count == 0 || selected.count <= 2) {
         for (NSInteger i = (NSInteger)chunks.count - 2; i >= 1; i--) {
             if ([selected containsIndex:(NSUInteger)i]) continue;
@@ -242,21 +237,21 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     if (count != 0 && count != 1 && count != 3) count = 3;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
-
 + (NSInteger)maxOutputTokens {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
-    return (value > 0) ? value : 128000;
+    return (value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 8192;
 }
 + (void)setMaxOutputTokens:(NSInteger)count {
-    if (count < 2048) count = 128000;
+    if (count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 8192;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
 }
-
 + (NSUInteger)contextLimitChars {
-    return (NSUInteger)200000000; 
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
+    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    [[NSUserDefaults standardUserDefaults] setInteger:200000000 forKey:kContextLimitCharsKey];
+    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
 }
 
 + (AIReasoningLevel)reasoningLevel {
@@ -272,8 +267,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 + (BOOL)webSearchEnabled { return [[NSUserDefaults standardUserDefaults] boolForKey:kWebSearchKey]; }
 + (void)setWebSearchEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWebSearchKey]; }
 
-#pragma mark - Token Tracking (Hạn mức ngày 24B & Tuần 1T)
-
 + (long long)dailyTokenUsage {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *today = TodayKey();
@@ -288,60 +281,30 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     return usageObject ? [usageObject longLongValue] : 0;
 }
 
-+ (long long)weeklyTokenUsage {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    NSString *currentWeek = CurrentWeekKey();
-
-    if (![[defaults stringForKey:kWeeklyWeekKey] isEqualToString:currentWeek]) {
-        [defaults setObject:currentWeek forKey:kWeeklyWeekKey];
-        [defaults setObject:@0 forKey:kWeeklyUsageKey];
-        return 0;
-    }
-
-    id usageObject = [defaults objectForKey:kWeeklyUsageKey];
-    return usageObject ? [usageObject longLongValue] : 0;
-}
-
 + (void)addDailyTokenUsage:(long long)count {
     if (count <= 0) return;
 
-    // Cập nhật ngày
-    long long dailyCurrent = [self dailyTokenUsage];
-    if (LLONG_MAX - dailyCurrent < count) dailyCurrent = LLONG_MAX;
-    else dailyCurrent += count;
-    [[NSUserDefaults standardUserDefaults] setObject:@(dailyCurrent) forKey:kDailyUsageKey];
+    long long current = [self dailyTokenUsage];
 
-    // Cập nhật tuần (Thứ 2 - Chủ Nhật)
-    long long weeklyCurrent = [self weeklyTokenUsage];
-    if (LLONG_MAX - weeklyCurrent < count) weeklyCurrent = LLONG_MAX;
-    else weeklyCurrent += count;
-    [[NSUserDefaults standardUserDefaults] setObject:@(weeklyCurrent) forKey:kWeeklyUsageKey];
+    if (LLONG_MAX - current < count)
+        current = LLONG_MAX;
+    else
+        current += count;
+
+    [[NSUserDefaults standardUserDefaults] setObject:@(current) forKey:kDailyUsageKey];
 }
 
 + (long long)dailyTokenBudget {
-    return 24000000000LL; // 24B
+    id budgetObject = [[NSUserDefaults standardUserDefaults] objectForKey:kDailyBudgetKey];
+    long long value = [budgetObject longLongValue];
+
+    return value > 0 ? value : 24000000000LL;
 }
 
 + (void)setDailyTokenBudget:(long long)count {
-    [[NSUserDefaults standardUserDefaults] setObject:@(24000000000LL) forKey:kDailyBudgetKey];
-}
+    if (count < 1) count = 24000000000LL;
 
-// Ngân sách tuần cố định: 1T (1 Trillion tokens)
-+ (long long)weeklyTokenBudget {
-    return 1000000000000LL; // 1T tokens
-}
-
-// Kiểm tra xem tuần này đã dùng hết 1T chưa
-+ (BOOL)isWeeklyBudgetExhausted {
-    return [self weeklyTokenUsage] >= [self weeklyTokenBudget];
-}
-
-// Tính phần trăm sử dụng tuần theo 1T
-+ (CGFloat)weeklyUsagePercentage {
-    long long used = [self weeklyTokenUsage];
-    long long budget = [self weeklyTokenBudget];
-    if (budget <= 0) return 0.0f;
-    return ((CGFloat)used / (CGFloat)budget) * 100.0f;
+    [[NSUserDefaults standardUserDefaults] setObject:@(count) forKey:kDailyBudgetKey];
 }
 
 @end

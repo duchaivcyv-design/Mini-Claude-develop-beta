@@ -2,7 +2,7 @@ Package: com.puc.claudemini
 Name: ClaudeMini
 Version: @VERSION@
 Architecture: iphoneos-arm
-Description: Lightweight Gemini AI chat app for iOS 12 with a Claude-inspired interface.
+Description: Lightweight Gemini and Claude AI chat client for iOS 12+ (rootful) with skins, dark mode, chat wallpapers and alternate app icons. Bring your own API key.
 Depends: firmware (>= 12.0)
 Section: Utilities
 Maintainer: puc <puc@users.noreply.github.com>

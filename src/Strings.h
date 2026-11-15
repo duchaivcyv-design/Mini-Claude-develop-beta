@@ -9,3 +9,4 @@
 #define kNotifHistoryCleared      @"ClaudeMiniHistoryCleared"
 #define kNotifConversationDeleted @"ClaudeMiniConversationDeleted"
 #define kNotifLanguageChanged     @"ClaudeMiniLanguageChanged"
+#define kNotifThemeChanged        @"ClaudeMiniThemeChanged"

@@ -44,6 +44,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 
 #pragma mark - Request format
 
+// Prefer the per-model cap returned by Anthropic's Models API; use a conservative fallback for older cached lists.
 - (NSInteger)maxTokens {
     NSInteger requested = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
@@ -51,34 +52,25 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     return MIN(requested, modelCap);
 }
 
+// Neutral turns -> Anthropic "messages": photos become image blocks, PDFs become document blocks.
 + (NSArray *)messagesFromTurns:(NSArray *)turns {
-    if (![turns isKindOfClass:[NSArray class]]) return @[];
     NSMutableArray *messages = [NSMutableArray array];
     for (NSDictionary *turn in turns) {
-        if (![turn isKindOfClass:[NSDictionary class]]) continue;
-        NSArray *turnParts = turn[@"parts"];
-        if (![turnParts isKindOfClass:[NSArray class]]) continue;
-        
         NSMutableArray *blocks = [NSMutableArray array];
-        for (NSDictionary *part in turnParts) {
-            if (![part isKindOfClass:[NSDictionary class]]) continue;
+        for (NSDictionary *part in turn[@"parts"]) {
             NSString *type = part[@"type"];
-            NSString *textVal = part[@"text"];
-            NSString *dataVal = part[@"data"];
-            
-            if ([type isEqualToString:@"text"] && [textVal length] > 0) {
-                [blocks addObject:@{ @"type": @"text", @"text": textVal }];
-            } else if ([type isEqualToString:@"image"] && [dataVal length] > 0) {
+            if ([type isEqualToString:@"text"] && [part[@"text"] length] > 0) {
+                [blocks addObject:@{ @"type": @"text", @"text": part[@"text"] }];
+            } else if ([type isEqualToString:@"image"] && [part[@"data"] length] > 0) {
                 [blocks addObject:@{ @"type": @"image",
-                                     @"source": @{ @"type": @"base64", @"media_type": part[@"mime"] ?: @"image/jpeg", @"data": dataVal } }];
-            } else if ([type isEqualToString:@"pdf"] && [dataVal length] > 0) {
+                                     @"source": @{ @"type": @"base64", @"media_type": part[@"mime"] ?: @"image/jpeg", @"data": part[@"data"] } }];
+            } else if ([type isEqualToString:@"pdf"] && [part[@"data"] length] > 0) {
                 [blocks addObject:@{ @"type": @"document",
-                                     @"source": @{ @"type": @"base64", @"media_type": @"application/pdf", @"data": dataVal } }];
+                                     @"source": @{ @"type": @"base64", @"media_type": @"application/pdf", @"data": part[@"data"] } }];
             }
         }
         if (blocks.count == 0) continue;
-        NSString *roleStr = [turn[@"role"] isEqualToString:@"assistant"] ? @"assistant" : @"user";
-        [messages addObject:@{ @"role": roleStr, @"content": blocks }];
+        [messages addObject:@{ @"role": [turn[@"role"] isEqualToString:@"assistant"] ? @"assistant" : @"user", @"content": blocks }];
     }
     return messages;
 }
@@ -87,14 +79,15 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 
 - (void)start {
     NSInteger maxTokens = [self maxTokens];
-    NSArray *messagesArray = [ClaudeStream messagesFromTurns:self.turns];
     NSMutableDictionary *payload = [@{ @"model": self.model ?: @"",
                                        @"max_tokens": @(maxTokens),
-                                       @"messages": messagesArray } mutableCopy];
+                                       @"messages": [ClaudeStream messagesFromTurns:self.turns] } mutableCopy];
     if (self.useStreaming) payload[@"stream"] = @YES;
     if (self.system.length > 0) payload[@"system"] = self.system;
 
-    NSString *lowerModel = self.model.lowercaseString ?: @"";
+    NSString *lowerModel = self.model.lowercaseString;
+    // Anthropic Fast mode is a provider feature, not a reasoning-level shortcut.
+    // Only send it to model families explicitly supported by the current Messages API.
     BOOL supportsFast = ([lowerModel containsString:@"claude-opus-5-5"] ||
                          [lowerModel containsString:@"claude-fable-5-2"] ||
                          [lowerModel containsString:@"claude-mythos-5-2"] ||
@@ -105,7 +98,6 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
                           ([lowerModel containsString:@"claude-opus-5-"] && ![lowerModel containsString:@"claude-opus-5-5"]);
     BOOL needsFastBeta = isOpus5Preview || [lowerModel containsString:@"claude-opus-4-8"];
     if (self.useFastSpeed && supportsFast) payload[@"speed"] = @"fast";
-    
     AIReasoningLevel level = [AppSettings reasoningLevel];
     BOOL adaptiveThinking = ([lowerModel containsString:@"-4-6"] || [lowerModel containsString:@"-4-7"] ||
                              [lowerModel containsString:@"-4-8"] || [lowerModel containsString:@"-5-"] ||
@@ -116,9 +108,11 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
                            [lowerModel containsString:@"-4-5"]);
     if (adaptiveThinking) {
         NSArray *efforts = @[@"low", @"medium", @"high", @"xhigh", @"max"];
-        NSString *effort = efforts[(NSUInteger)MIN(level, efforts.count - 1)];
+        NSString *effort = efforts[(NSUInteger)level];
+        // 4.6 supports max but model support for xhigh is model-family-specific.
         if ([lowerModel containsString:@"-4-6"] && level == AIReasoningLevelVeryHigh) effort = @"high";
         NSMutableDictionary *thinking = [@{ @"type": @"adaptive" } mutableCopy];
+        // Thinking summaries are accepted on newer adaptive-thinking model families.
         if ([lowerModel containsString:@"-4-7"] || [lowerModel containsString:@"-4-8"] ||
             [lowerModel containsString:@"-5-"] || [lowerModel containsString:@"-6-"]) {
             thinking[@"display"] = @"summarized";
@@ -127,26 +121,21 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
         payload[@"output_config"] = @{ @"effort": effort };
     } else if (legacyThinking && level > AIReasoningLevelLow) {
         NSArray *budgets = @[@0, @1024, @2048, @4096, @8192];
-        NSInteger budget = [budgets[(NSUInteger)MIN(level, budgets.count - 1)] integerValue];
+        NSInteger budget = [budgets[(NSUInteger)level] integerValue];
         budget = MIN(budget, MAX(0, maxTokens - 1024));
         if (budget >= 1024) payload[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": @(budget) };
     }
 
+    // Anthropic executes this managed search tool server-side; no client-side browser credentials are needed.
     if ([AppSettings webSearchEnabled]) {
         payload[@"tools"] = @[@{ @"type": @"web_search_20250305", @"name": @"web_search", @"max_uses": @3 }];
     }
-    
-    NSError *jsonError = nil;
-    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonError];
-    if (jsonError || !body) {
-        body = [NSData data];
-    }
+    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
+    // High-effort reasoning and grounded searches can take longer before the first SSE event.
+    // Use a generous inactivity timeout; the delegate resets it as data continues to arrive.
     NSTimeInterval timeout = self.useStreaming ? 180 : 240;
-    NSURL *requestURL = [NSURL URLWithString:kClaudeMessagesURL];
-    if (!requestURL) return;
-
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:requestURL
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:kClaudeMessagesURL]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:timeout];
     request.HTTPMethod = @"POST";
@@ -154,7 +143,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [request setValue:self.useStreaming ? @"text/event-stream" : @"application/json" forHTTPHeaderField:@"Accept"];
     if (self.useStreaming) [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
-    if (self.key.length > 0) [request setValue:self.key forHTTPHeaderField:@"x-api-key"];
+    [request setValue:self.key forHTTPHeaderField:@"x-api-key"];
     [request setValue:kAnthropicVersion forHTTPHeaderField:@"anthropic-version"];
     if (self.useFastSpeed && supportsFast && needsFastBeta) {
         [request setValue:@"fast-mode-2026-02-01" forHTTPHeaderField:@"anthropic-beta"];
@@ -171,9 +160,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 - (void)cancel {
     if (self.finished) return;
     self.cancelled = YES;
-    if (self.task) {
-        [self.task cancel];
-    }
+    [self.task cancel];
 }
 
 #pragma mark - NSURLSessionDataDelegate
@@ -190,7 +177,8 @@ didReceiveResponse:(NSURLResponse *)response
             if ([[key description] caseInsensitiveCompare:@"Retry-After"] != NSOrderedSame) continue;
             id rawValue = headers[key];
             NSTimeInterval delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
-            if (delay <= 0 && [rawValue respondsToSelector:@selector(description)]) {
+            if (delay <= 0) {
+                // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
                 NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
                 formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
                 formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
@@ -206,7 +194,6 @@ didReceiveResponse:(NSURLResponse *)response
 }
 
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
-    if (!data || data.length == 0) return;
     if (self.status != 200) {
         [self.errorBody appendData:data];
         return;
@@ -218,9 +205,7 @@ didReceiveResponse:(NSURLResponse *)response
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (self.finished) return;
     self.finished = YES;
-    if (self.session) {
-        [self.session finishTasksAndInvalidate];
-    }
+    [self.session finishTasksAndInvalidate];
 
     GeminiStreamError result = GeminiStreamErrorNone;
     NSString *detail = nil;
@@ -229,7 +214,7 @@ didReceiveResponse:(NSURLResponse *)response
         result = GeminiStreamErrorCancelled;
     } else if (error != nil) {
         result = GeminiStreamErrorNetwork;
-        detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription ?: @"Lỗi mạng", error.domain ?: @"", (long)error.code];
+        detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
     } else if (self.status != 200) {
         NSString *type = nil, *message = nil;
         [self readErrorBody:self.errorBody type:&type message:&message];
@@ -254,6 +239,8 @@ didReceiveResponse:(NSURLResponse *)response
         self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
     }
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+    // Anthropic may deliver overloaded_error/rate_limit_error inside an HTTP 200 SSE stream.
+    // Translate those event types to retryable status codes for the controller.
     NSInteger reportedStatus = self.status;
     if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"overloaded_error"]) reportedStatus = 529;
     else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"rate_limit_error"]) reportedStatus = 429;
@@ -273,7 +260,7 @@ didReceiveResponse:(NSURLResponse *)response
 
 - (void)drainBufferFinal:(BOOL)final {
     NSData *newline = [NSData dataWithBytes:"\n" length:1];
-    while (self.buffer.length > 0) {
+    while (YES) {
         NSRange range = [self.buffer rangeOfData:newline options:0 range:NSMakeRange(0, self.buffer.length)];
         if (range.location == NSNotFound) break;
         NSData *lineData = [self.buffer subdataWithRange:NSMakeRange(0, range.location)];
@@ -286,8 +273,8 @@ didReceiveResponse:(NSURLResponse *)response
     }
 }
 
+// Lines look like "event: content_block_delta" (ignored: the JSON carries the type) and "data: {...}".
 - (void)processLineData:(NSData *)lineData {
-    if (!lineData || lineData.length == 0) return;
     NSString *line = [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
     if (line == nil) return;
     line = [line stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\r"]];
@@ -295,17 +282,12 @@ didReceiveResponse:(NSURLResponse *)response
     NSString *payload = [[line substringFromIndex:5] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (payload.length == 0) return;
 
-    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
-    if (!payloadData) return;
-
-    NSError *jsonError = nil;
-    id json = [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:&jsonError];
-    if (jsonError || ![json isKindOfClass:[NSDictionary class]]) return;
+    id json = [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return;
     [self processEvent:json];
 }
 
 - (void)processEvent:(NSDictionary *)event {
-    if (![event isKindOfClass:[NSDictionary class]]) return;
     NSString *type = [event[@"type"] isKindOfClass:[NSString class]] ? event[@"type"] : @"";
 
     if ([type isEqualToString:@"message_start"]) {
@@ -319,6 +301,7 @@ didReceiveResponse:(NSURLResponse *)response
     } else if ([type isEqualToString:@"content_block_delta"]) {
         NSDictionary *delta = [event[@"delta"] isKindOfClass:[NSDictionary class]] ? event[@"delta"] : nil;
         NSString *text = [delta[@"text"] isKindOfClass:[NSString class]] ? delta[@"text"] : nil;
+        // Only plain text is shown (thinking deltas, tool JSON, etc. are not requested and would be ignored here).
         if ([delta[@"type"] isEqualToString:@"text_delta"] && text.length > 0) {
             self.gotText = YES;
             if (self.onDelta) self.onDelta(text);
@@ -329,18 +312,19 @@ didReceiveResponse:(NSURLResponse *)response
         if ([delta[@"stop_reason"] isKindOfClass:[NSString class]]) self.stopReason = delta[@"stop_reason"];
         self.outputTokenUsage = MAX(self.outputTokenUsage, [usage[@"output_tokens"] longLongValue]);
     } else if ([type isEqualToString:@"error"]) {
+        // An error can arrive after the 200 response has started (for example overloaded_error).
         NSDictionary *err = [event[@"error"] isKindOfClass:[NSDictionary class]] ? event[@"error"] : nil;
         self.inStreamErrorType = [err[@"type"] isKindOfClass:[NSString class]] ? err[@"type"] : @"api_error";
         if ([err[@"message"] isKindOfClass:[NSString class]]) self.inStreamErrorMessage = err[@"message"];
     }
+    // ping, message_start, content_block_start, content_block_stop, message_stop: nothing to do
 }
 
+// Single-request mode: the whole reply is one JSON object with a "content" array of blocks.
 - (void)processWholeBody {
     if (self.buffer.length == 0) return;
-    NSError *jsonError = nil;
-    id json = [NSJSONSerialization JSONObjectWithData:self.buffer options:0 error:&jsonError];
-    if (jsonError || ![json isKindOfClass:[NSDictionary class]]) return;
-    
+    id json = [NSJSONSerialization JSONObjectWithData:self.buffer options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *root = json;
     NSDictionary *usage = [root[@"usage"] isKindOfClass:[NSDictionary class]] ? root[@"usage"] : nil;
     long long input = [usage[@"input_tokens"] longLongValue]
@@ -366,18 +350,18 @@ didReceiveResponse:(NSURLResponse *)response
 #pragma mark - Errors
 
 - (void)readErrorBody:(NSData *)body type:(NSString **)type message:(NSString **)message {
-    if (!body || body.length == 0) return;
-    NSError *jsonError = nil;
-    id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:&jsonError];
-    if (jsonError || ![json isKindOfClass:[NSDictionary class]]) return;
-    
+    if (body.length == 0) return;
+    id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *err = [json[@"error"] isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
     if ([err[@"type"] isKindOfClass:[NSString class]]) *type = err[@"type"];
     if ([err[@"message"] isKindOfClass:[NSString class]]) *message = err[@"message"];
 }
 
+// `status` is 0 for an error that arrived inside a stream: then only the error type is known.
 + (GeminiStreamError)errorForStatus:(NSInteger)status type:(NSString *)type message:(NSString *)message {
-    NSString *lower = [message lowercaseString] ?: @"";
+    NSString *lower = [message lowercaseString];
+    // A key with no money left answers 400 invalid_request_error: say so instead of "unknown error".
     if (lower.length > 0 && [lower rangeOfString:@"credit balance"].location != NSNotFound) return GeminiStreamErrorNoCredit;
 
     if ([type isEqualToString:@"authentication_error"]) return GeminiStreamErrorInvalidKey;
@@ -400,7 +384,7 @@ didReceiveResponse:(NSURLResponse *)response
     if (status == 403) return GeminiStreamErrorPermissionDenied;
     if (status == 404) return GeminiStreamErrorModelNotFound;
     if (status == 429) return GeminiStreamErrorRateLimited;
-    if (status >= 500) return GeminiStreamErrorServer;
+    if (status >= 500) return GeminiStreamErrorServer;   // includes 529 (overloaded)
     return GeminiStreamErrorUnknown;
 }
 

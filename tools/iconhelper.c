@@ -1,0 +1,80 @@
+// claudemini-icon: tiny setuid-root helper, shipped ONLY in the rootful .deb.
+// Usage: claudemini-icon <Default|SideStore|LiveContainer|Dopamine|Chimera|Sileo|Github>
+// It copies Icon-<name>@2x/@3x.png over AppIcon60x60@2x/@3x.png inside /Applications/ClaudeMini.app and refreshes
+// SpringBoard with uicache, because the normal iOS icon-switching API does not update the Home Screen for
+// apps installed in /Applications. Only fixed file names inside the app folder are touched; the folder is owned by root.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <spawn.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+
+extern char **environ;
+
+#define APP_DIR "/Applications/ClaudeMini.app"
+
+static const char *kAllowed[] = { "Default", "SideStore", "LiveContainer", "Dopamine", "Chimera", "Sileo", "Github", NULL };
+
+static int copy_file(const char *src, const char *dst) {
+    int in = open(src, O_RDONLY | O_NOFOLLOW);
+    if (in < 0) return -1;
+    char tmp[512];
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", dst) >= (int)sizeof(tmp)) { close(in); return -1; }
+    unlink(tmp);
+    int out = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+    if (out < 0) { close(in); return -1; }
+    char buf[8192];
+    ssize_t n;
+    int ok = 1;
+    while ((n = read(in, buf, sizeof(buf))) > 0) {
+        if (write(out, buf, (size_t)n) != n) { ok = 0; break; }
+    }
+    if (n < 0) ok = 0;
+    close(in);
+    if (close(out) != 0) ok = 0;
+    if (!ok) { unlink(tmp); return -1; }
+    chmod(tmp, 0644);
+    if (rename(tmp, dst) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
+static int run(const char *path, char *const argv[]) {
+    pid_t pid;
+    if (posix_spawn(&pid, path, NULL, NULL, argv, environ) != 0) return -1;
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+    return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) return 64;
+    int allowed = 0;
+    for (int i = 0; kAllowed[i]; i++) if (strcmp(argv[1], kAllowed[i]) == 0) allowed = 1;
+    if (!allowed) return 65;
+
+    setgid(0);
+    setuid(0);
+    if (geteuid() != 0) return 77;   // the setuid bit is missing
+
+    static const char *scales[] = { "@2x", "@3x", NULL };
+    for (int i = 0; scales[i]; i++) {
+        char src[512], dst[512];
+        snprintf(src, sizeof(src), APP_DIR "/Icon-%s%s.png", argv[1], scales[i]);
+        snprintf(dst, sizeof(dst), APP_DIR "/AppIcon60x60%s.png", scales[i]);
+        if (copy_file(src, dst) != 0) return 1;
+    }
+
+    setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin", 1);
+    char *with_path[] = { "uicache", "-p", APP_DIR, NULL };
+    if (run("/usr/bin/uicache", with_path) != 0) {
+        char *plain[] = { "uicache", NULL };
+        if (run("/usr/bin/uicache", plain) != 0) return 2;
+    }
+    return 0;
+}

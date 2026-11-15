@@ -1,5 +1,15 @@
 # ClaudeMini 0.7.0 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
 
+## Mới: Skin, chế độ tối, nền chat, đổi icon
+Cài đặt › **Giao diện** (màn Lịch sử › Cài đặt › Giao diện). Đổi xong áp dụng ngay, cuộc trò chuyện đang mở được giữ nguyên.
+- **7 skin**: Claude (mặc định, giữ nguyên giao diện cũ) và 6 skin màu: **SideStore Skin** (tím), **LiveContainer Skin** (xanh biển), **Dopamine Skin** (xanh lá), **Chimera Skin** (trắng), **Sileo Skin** (xanh lam), **Github Skin** (đỏ). Mỗi skin có màu chủ đạo, ảnh nền chat và icon riêng.
+- **Sáng / Tối / Tự động** (như màn Hiển thị của iOS): hai ảnh xem trước theo đúng skin đang chọn; bật **Tự động** thì app tối từ 18:00 đến 06:00 theo giờ trên máy. Hộp thoại hệ thống chỉ tối theo trên iOS 13 trở lên.
+- **Cài đặt** chia lại: *Cho app hợp gu bạn* (giao diện, ngôn ngữ) › *Chìa khóa kết nối AI* › *Cách AI trò chuyện với bạn* › *Dữ liệu & thông tin*.
+- **Nền chat**: Theo skin / Không dùng ảnh nền / chọn bất kỳ trong 6 ảnh nền. Khi có ảnh nền, tin nhắn của AI nằm trong thẻ mờ để luôn dễ đọc; chế độ tối làm tối ảnh nền.
+- **Icon ứng dụng**: chọn icon của từng skin hoặc quay về icon mặc định (dùng `setAlternateIconName`, iOS sẽ hiện thông báo xác nhận). Khi chọn một skin, app hỏi có đổi luôn icon không.
+- Cách làm: `src/Theme.m` (bảng màu sáng/tối của từng skin), `src/AppearanceViewController.m` (màn hình chọn), `app/Resources/web/chat.css` (dùng biến màu `--bg`, `--accent`…; app chèn bảng màu của skin vào `<style id="themevars">`), `app/Resources/Wallpapers/` (6 ảnh nền JPEG), `app/Resources/Icon-*@2x/@3x.png` + `CFBundleAlternateIcons` trong `app/Info.plist` (6 icon).
+- Số phiên bản (`VERSION`) và mức iOS tối thiểu (12.0) **không đổi**. Gói `.deb` vẫn là rootful (`iphoneos-arm`, cài vào `/Applications`).
+
 App chat Gemini và Claude cho iPhone iOS 12 đã jailbreak (arm64), giao diện kiểu Claude (sáng, tiếng Việt/Anh theo ngôn ngữ máy).
 
 ## Bản này làm được gì

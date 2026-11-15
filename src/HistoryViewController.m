@@ -46,6 +46,25 @@
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
     self.emptyLabel.numberOfLines = 0;
     [self.view addSubview:self.emptyLabel];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
+    [self applyTheme];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+// Skin, dark mode or wallpaper changed in Settings (this screen is still in the navigation stack).
+- (void)applyTheme {
+    self.view.backgroundColor = [Theme background];
+    self.tableView.backgroundColor = [Theme background];
+    self.tableView.separatorColor = [Theme border];
+    self.searchBar.tintColor = [Theme accent];
+    self.searchBar.barStyle = [Theme darkMode] ? UIBarStyleBlack : UIBarStyleDefault;
+    self.searchBar.keyboardAppearance = [Theme keyboardAppearance];
+    self.emptyLabel.textColor = [Theme secondaryText];
+    [self.tableView reloadData];   // cells use a reuse identifier that includes the skin, so they are rebuilt
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -114,7 +133,7 @@
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *identifier = @"conversation";
+    NSString *identifier = [@"conversation-" stringByAppendingString:[Theme signature]];
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];

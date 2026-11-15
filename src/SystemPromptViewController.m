@@ -35,6 +35,7 @@
     self.textView.font = [UIFont systemFontOfSize:16];
     self.textView.textColor = [Theme text];
     self.textView.tintColor = [Theme accent];
+    self.textView.keyboardAppearance = [Theme keyboardAppearance];
     self.textView.textContainerInset = UIEdgeInsetsMake(12, 10, 12, 10);
     self.textView.delegate = self;
     self.textView.text = self.perConversation ? (self.initialText ?: @"") : [AppSettings systemPrompt];

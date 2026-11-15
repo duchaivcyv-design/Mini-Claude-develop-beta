@@ -71,14 +71,11 @@ static GeminiCheckResult ResultForStatus(NSInteger status) {
 #pragma mark - Model list
 
 + (BOOL)isChatModelId:(NSString *)modelId {
-    NSString *lower = [modelId lowercaseString];
-    // Cho phép tất cả các model thuộc họ gemini hoặc nano đi qua
-    if (![lower hasPrefix:@"gemini"] && ![lower containsString:@"nano"]) return NO;
-    
-    // Chỉ loại bỏ các model thực sự không phục vụ trò chuyện/văn bản
+    if (![modelId hasPrefix:@"gemini"]) return NO;
+    // These accept generateContent but produce images/audio or are not plain text chat.
     NSArray *blocked = @[@"tts", @"live", @"audio", @"embedding", @"robotics", @"computer-use", @"aqa"];
     for (NSString *token in blocked) {
-        if ([lower rangeOfString:token].location != NSNotFound) return NO;
+        if ([modelId rangeOfString:token].location != NSNotFound) return NO;
     }
     return YES;
 }
