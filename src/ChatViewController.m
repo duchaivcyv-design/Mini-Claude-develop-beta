@@ -18,9 +18,11 @@
 #import "HistoryViewController.h"
 #import "ModelPickerViewController.h"
 #import "OfficeExport.h"
+#import <math.h>
 
 static const CGFloat kMaxInputHeight = 120;
 static const CGFloat kStripHeight = 64;               // chip row above the text box (56 pt chips + spacing)
+static const CGFloat kToolsRowHeight = 34;
 static const NSUInteger kGreetingCount = 6;           // how many different lines can appear under the greeting
 
 #pragma mark - Weak script handler (WKUserContentController retains its handlers)
@@ -82,6 +84,12 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIScrollView *attachStrip;
 @property (strong, nonatomic) UIView *inputBox;
 @property (strong, nonatomic) UIButton *attachButton;
+@property (strong, nonatomic) UIView *toolRow;
+@property (strong, nonatomic) UIButton *reasoningButton;
+@property (strong, nonatomic) UIButton *searchButton;
+@property (strong, nonatomic) UIButton *fastButton;
+@property (strong, nonatomic) UIButton *mentionButton;
+@property (strong, nonatomic) UILabel *reasoningValueLabel;
 @property (strong, nonatomic) UITextView *textView;
 @property (strong, nonatomic) UILabel *placeholderLabel;
 @property (strong, nonatomic) UIButton *sendButton;
@@ -97,6 +105,8 @@ static NSString *ClippedForLog(NSString *text) {
 @property (copy, nonatomic) NSString *shownGreeting;        // what the page currently shows, to avoid redrawing for nothing
 @property (assign, nonatomic) BOOL attemptIsStreaming;   // the current request is a live stream (vs. single-shot fallback)
 @property (assign, nonatomic) NSInteger streamRetryCount;
+@property (assign, nonatomic) BOOL didRecoverModel404;
+@property (assign, nonatomic) BOOL didFallbackFromFastMode;
 @property (strong, nonatomic) NSMutableString *streamBuffer;
 @property (strong, nonatomic) NSMutableArray *streamGeneratedAttachments;
 
@@ -149,6 +159,8 @@ static NSString *ClippedForLog(NSString *text) {
     self.conversation = [ConversationStore newConversationWithModel:self.model];
     [self updateModelTitle];
     [self updateSendButton];
+    [self updateDailyTokenPrompt];
+    [self updateToolButtons];
 
     [self loadWebPage];
     [self refreshModels];
@@ -172,6 +184,8 @@ static NSString *ClippedForLog(NSString *text) {
     [super viewWillAppear:animated];
     [self ensureModelMatchesKeys];   // a key may have been added or removed in Settings
     [self updateModelTitle];
+    [self updateDailyTokenPrompt];
+    [self updateToolButtons];
     [self refreshGreetingIfEmpty];
 }
 
@@ -215,6 +229,19 @@ static NSString *ClippedForLog(NSString *text) {
     self.attachStrip.alwaysBounceHorizontal = YES;
     self.attachStrip.hidden = YES;
     [self.inputBar addSubview:self.attachStrip];
+
+    self.toolRow = [[UIView alloc] init];
+    self.toolRow.backgroundColor = [UIColor clearColor];
+    [self.inputBar addSubview:self.toolRow];
+
+    self.reasoningButton = [self toolButtonWithTitle:@"🧠 Suy luận" action:@selector(reasoningTapped)];
+    self.searchButton = [self toolButtonWithTitle:@"⌕ Tìm kiếm" action:@selector(searchTapped)];
+    self.fastButton = [self toolButtonWithTitle:@"⚡" action:@selector(fastTapped)];
+    self.mentionButton = [self toolButtonWithTitle:@"@" action:@selector(mentionTapped)];
+    [self.toolRow addSubview:self.reasoningButton];
+    [self.toolRow addSubview:self.searchButton];
+    [self.toolRow addSubview:self.fastButton];
+    [self.toolRow addSubview:self.mentionButton];
 
     self.inputBox = [[UIView alloc] init];
     self.inputBox.backgroundColor = [Theme surface];
@@ -274,19 +301,187 @@ static NSString *ClippedForLog(NSString *text) {
     self.textView.scrollEnabled = fit > kMaxInputHeight;
 
     CGFloat boxHeight = textHeight + 8;
-    CGFloat barHeight = 8 + stripHeight + boxHeight + 8;
+    CGFloat toolsY = 8 + stripHeight;
+    CGFloat boxY = toolsY + kToolsRowHeight + 4;
+    CGFloat barHeight = boxY + boxHeight + 8;
     self.inputBar.frame = CGRectMake(0, height - bottomInset - barHeight, width, barHeight);
     [self.inputBar viewWithTag:1001].frame = CGRectMake(0, 0, width, 1);
 
     self.attachStrip.hidden = !showStrip;
     self.attachStrip.frame = CGRectMake(0, 8, width, stripHeight);
-    self.inputBox.frame = CGRectMake(12, 8 + stripHeight, boxWidth, boxHeight);
+    self.toolRow.frame = CGRectMake(12, toolsY, width - 24, kToolsRowHeight);
+    CGFloat toolWidth = floor((width - 24) / 4.0);
+    self.reasoningButton.frame = CGRectMake(0, 0, toolWidth, kToolsRowHeight);
+    self.searchButton.frame = CGRectMake(toolWidth, 0, toolWidth, kToolsRowHeight);
+    self.fastButton.frame = CGRectMake(toolWidth * 2, 0, toolWidth, kToolsRowHeight);
+    self.mentionButton.frame = CGRectMake(toolWidth * 3, 0, toolWidth, kToolsRowHeight);
+    self.inputBox.frame = CGRectMake(12, boxY, boxWidth, boxHeight);
     self.attachButton.frame = CGRectMake(5, boxHeight - 36 - 5, 36, 36);
     self.textView.frame = CGRectMake(leftPad, 4, textWidth, textHeight);
     self.placeholderLabel.frame = CGRectMake(leftPad + 11, 13, textWidth - 12, 20);
     self.sendButton.frame = CGRectMake(boxWidth - 36 - 5, boxHeight - 36 - 5, 36, 36);
+    [self updateToolButtons];
 
     self.webView.frame = CGRectMake(0, 0, width, CGRectGetMinY(self.inputBar.frame));
+}
+
+- (UIButton *)toolButtonWithTitle:(NSString *)title action:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    [button setTitle:title forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+    button.layer.cornerRadius = 9;
+    button.backgroundColor = [Theme surface];
+    [button setTitleColor:[Theme secondaryText] forState:UIControlStateNormal];
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (BOOL)currentModelSupportsFastMode {
+    if ([Provider forModelId:self.model] != AIProviderClaude) return NO;
+    NSString *model = self.model.lowercaseString ?: @"";
+    return [model containsString:@"claude-opus-5-5"] ||
+           [model containsString:@"claude-fable-5-2"] ||
+           [model containsString:@"claude-mythos-5-2"] ||
+           [model isEqualToString:@"claude-opus-5"] ||
+           ([model containsString:@"claude-opus-5-"] && ![model containsString:@"claude-opus-5-5"]) ||
+           [model containsString:@"claude-opus-4-8"];
+}
+
+- (void)updateToolButtons {
+    UIColor *active = [Theme accent];
+    [self.reasoningButton setTitleColor:active forState:UIControlStateNormal];
+    [self.searchButton setTitleColor:[AppSettings webSearchEnabled] ? active : [Theme secondaryText] forState:UIControlStateNormal];
+    BOOL supportsFast = [self currentModelSupportsFastMode];
+    self.fastButton.enabled = YES; // Unsupported models remain tappable so the UI can explain the limitation.
+    self.fastButton.alpha = supportsFast ? 1.0 : 0.42;
+    [self.fastButton setTitleColor:(supportsFast && [AppSettings fastModeEnabled]) ? active : [Theme secondaryText] forState:UIControlStateNormal];
+    NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX"][(NSUInteger)[AppSettings reasoningLevel]];
+    [self.reasoningButton setTitle:[NSString stringWithFormat:@"🧠 %@", level] forState:UIControlStateNormal];
+    [self.searchButton setTitle:[AppSettings webSearchEnabled] ? @"⌕ Tìm ✓" : @"⌕ Tìm kiếm" forState:UIControlStateNormal];
+}
+
+- (void)reasoningTapped {
+    [self.view endEditing:YES];
+    UIViewController *panel = [[UIViewController alloc] init];
+    panel.view.backgroundColor = [Theme background];
+    panel.preferredContentSize = CGSizeMake(320, 210);
+    panel.modalPresentationStyle = UIModalPresentationFormSheet;
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 280, 28)];
+    title.text = @"Mức suy luận";
+    title.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
+    title.textColor = [Theme text];
+    [panel.view addSubview:title];
+
+    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 56, 280, 24)];
+    self.reasoningValueLabel.textAlignment = NSTextAlignmentCenter;
+    self.reasoningValueLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    self.reasoningValueLabel.textColor = [Theme accent];
+    [panel.view addSubview:self.reasoningValueLabel];
+
+    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(24, 92, 272, 34)];
+    slider.minimumValue = 0;
+    slider.maximumValue = 4;
+    slider.minimumTrackTintColor = [Theme accent];
+    slider.value = [AppSettings reasoningLevel];
+    [slider addTarget:self action:@selector(reasoningSliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [panel.view addSubview:slider];
+    [self reasoningSliderChanged:slider];
+
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 130, 280, 30)];
+    hint.text = @"Mức cao có thể tăng độ trễ và chi phí. Model không hỗ trợ sẽ dùng mức gần nhất.";
+    hint.font = [UIFont systemFontOfSize:11];
+    hint.numberOfLines = 2;
+    hint.textAlignment = NSTextAlignmentCenter;
+    hint.textColor = [Theme secondaryText];
+    [panel.view addSubview:hint];
+
+    UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
+    done.frame = CGRectMake(20, 170, 280, 30);
+    [done setTitle:L(@"done") forState:UIControlStateNormal];
+    [done addTarget:self action:@selector(dismissReasoningPanel) forControlEvents:UIControlEventTouchUpInside];
+    [panel.view addSubview:done];
+    [self presentViewController:panel animated:YES completion:nil];
+}
+
+- (void)reasoningSliderChanged:(UISlider *)slider {
+    NSInteger level = (NSInteger)lrintf(slider.value);
+    [AppSettings setReasoningLevel:(AIReasoningLevel)level];
+    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX"];
+    self.reasoningValueLabel.text = names[(NSUInteger)level];
+    [self updateToolButtons];
+    [self pushStrings]; // Keep the in-chat reasoning status in sync with the selected level.
+}
+
+- (void)dismissReasoningPanel {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)searchTapped {
+    [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
+    [self updateToolButtons];
+    [self showAlertMessage:[AppSettings webSearchEnabled] ? @"Tìm kiếm web đã bật cho các API hỗ trợ công cụ tìm kiếm." : @"Tìm kiếm web đã tắt."];
+}
+
+- (void)fastTapped {
+    if (![self currentModelSupportsFastMode]) {
+        [self showAlertMessage:@"Tăng tốc ⚡ hiện chỉ hỗ trợ Claude Opus 5.5, Fable 5.2, Mythos 5.2 và một số model Opus 5/4.8 qua Claude API. Gemini generateContent hiện không nhận Fast mode Priority; nút sẽ mở khi chọn model Claude tương thích."];
+        return;
+    }
+    [AppSettings setFastModeEnabled:![AppSettings fastModeEnabled]];
+    [self updateToolButtons];
+    [self showAlertMessage:[AppSettings fastModeEnabled] ? @"Đã bật Fast mode của Claude. Model tương thích có thể tạo output nhanh hơn (tối đa khoảng 2,5×); giá API Fast cao hơn. Mức suy luận bạn chọn vẫn được giữ nguyên." : @"Đã tắt Fast mode; dùng tốc độ tiêu chuẩn."];
+}
+
+- (void)mentionTapped {
+    [self.view endEditing:YES];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"@ Công cụ" message:@"Chọn tác vụ hoặc tích hợp" preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak typeof(self) weakSelf = self;
+    NSArray *recent = self.conversation[@"messages"];
+    NSString *lastReply = nil;
+    for (NSInteger i = (NSInteger)recent.count - 1; i >= 0; i--) {
+        NSDictionary *message = recent[(NSUInteger)i];
+        if (![message[@"role"] isEqualToString:@"user"] && [message[@"text"] isKindOfClass:[NSString class]] && [message[@"text"] length] > 0) { lastReply = message[@"text"]; break; }
+    }
+    // Always show file-creation commands. If there is no assistant reply yet, use the
+    // draft currently in the input box instead of hiding these actions from the @ menu.
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Tạo tệp TXT" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        NSString *source = lastReply.length > 0 ? lastReply : [weakSelf trimmedInput];
+        if (source.length > 0) [weakSelf exportText:source asWord:NO];
+        else [weakSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp TXT."];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Tạo tệp DOCX" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        NSString *source = lastReply.length > 0 ? lastReply : [weakSelf trimmedInput];
+        if (source.length > 0) [weakSelf exportText:source asWord:YES];
+        else [weakSelf showAlertMessage:@"Hãy nhập nội dung hoặc tạo câu trả lời trước khi xuất tệp DOCX."];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Chọn tệp để đính kèm…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [weakSelf attachTapped];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"/tạo ảnh" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        weakSelf.textView.text = @"/tạo ảnh ";
+        [weakSelf textViewDidChange:weakSelf.textView];
+        [weakSelf.textView becomeFirstResponder];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:[AppSettings webSearchEnabled] ? @"Tắt tìm kiếm web" : @"Bật tìm kiếm web" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) { [weakSelf searchTapped]; }]];
+    NSArray *external = @[@"Gmail", @"Google Calendar", @"Google Docs", @"Google Drive", @"Google Home", @"Google Keep", @"Google Photos", @"Google Sheets", @"Google Tasks"];
+    for (NSString *name in external) {
+        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [weakSelf showAlertMessage:[NSString stringWithFormat:@"%@ cần kết nối OAuth/API riêng. Phiên bản này chưa có thông tin xác thực để truy cập tài khoản.", name]];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = self.mentionButton;
+    sheet.popoverPresentationController.sourceRect = self.mentionButton.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)updateDailyTokenPrompt {
+    long long used = [AppSettings dailyTokenUsage];
+    long long budget = [AppSettings dailyTokenBudget];
+    NSString *usedText = used >= 1000000000LL ? [NSString stringWithFormat:@"%.2fB", used / 1000000000.0] : [NSString stringWithFormat:@"%lld", used];
+    NSString *budgetText = budget >= 1000000000LL ? [NSString stringWithFormat:@"%.0fB", budget / 1000000000.0] : [NSString stringWithFormat:@"%lld", budget];
+    self.navigationItem.prompt = [NSString stringWithFormat:@"Token hôm nay: %@/%@", usedText, budgetText];
 }
 
 - (void)relayoutAnimated {
@@ -430,7 +625,8 @@ static NSString *ClippedForLog(NSString *text) {
                                           @"retry": L(@"retry"),
                                           @"edit": L(@"edit"),
                                           @"save": L(@"save_reply"),
-                                          @"share": L(@"share_image") }]];
+                                          @"share": L(@"share_image"),
+                                          @"thinking": ([AppSettings reasoningLevel] >= AIReasoningLevelHigh) ? @"Đang suy luận sâu…" : @"Đang xử lý…" }]];
 }
 
 // What the page needs to draw a message's attachments: kind, name, and a small thumbnail for photos.
@@ -984,6 +1180,41 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     BOOL hasAttachments = self.pendingAttachments.count > 0;
     if ((text.length == 0 && !hasAttachments) || !self.webReady || self.importsInFlight > 0) return;
 
+    // /tạo ảnh explicitly routes to a Gemini image-generation model. Do not silently
+    // send this command to a normal text-only model and pretend an image was generated.
+    NSString *lowerText = text.lowercaseString;
+    if ([lowerText hasPrefix:@"/tạo ảnh"]) {
+        NSString *imagePrompt = [[text substringFromIndex:([@"/tạo ảnh" length])] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (imagePrompt.length == 0) { [self showAlertMessage:@"Hãy nhập mô tả ảnh sau lệnh /tạo ảnh."]; return; }
+        if (![KeyStore hasKeyForProvider:AIProviderGemini]) {
+            [self showAlertMessage:@"Tạo ảnh cần Gemini API key. Hãy thêm key Gemini trong Cài đặt."];
+            return;
+        }
+        NSString *currentModel = self.model.lowercaseString;
+        NSString *imageModel = ([currentModel containsString:@"image"] || [currentModel containsString:@"nano-banana"])
+            && [Provider forModelId:self.model] == AIProviderGemini ? self.model : nil;
+        if (!imageModel) {
+            for (NSDictionary *model in [ModelStore cachedModelsForProvider:AIProviderGemini]) {
+                NSString *mid = [model[@"id"] isKindOfClass:[NSString class]] ? model[@"id"] : @"";
+                NSString *name = [model[@"name"] isKindOfClass:[NSString class]] ? model[@"name"] : @"";
+                NSString *lowerID = mid.lowercaseString;
+                NSString *lowerName = name.lowercaseString;
+                if ([lowerID containsString:@"image"] || [lowerID containsString:@"nano-banana"] ||
+                    [lowerName containsString:@"image generation"] || [lowerName containsString:@"nano banana"]) { imageModel = mid; break; }
+            }
+        }
+        if (imageModel.length == 0) {
+            [self showAlertMessage:@"Danh sách model Gemini hiện tại chưa có model tạo ảnh. Hãy làm mới danh sách model hoặc chọn model Gemini hỗ trợ tạo ảnh."];
+            [self refreshModels];
+            return;
+        }
+        self.model = imageModel;
+        [ModelStore setSelectedModelId:imageModel];
+        self.conversation[@"model"] = imageModel;
+        [self updateModelTitle];
+        text = [NSString stringWithFormat:@"Create an image based on this prompt: %@", imagePrompt];
+    }
+
     if (![KeyStore hasAnyKey]) {
         [[NSNotificationCenter defaultCenter] postNotificationName:kNotifKeyChanged object:nil];
         return;
@@ -1071,9 +1302,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             } else {
                 NSString *mime = [att[@"mime"] isKindOfClass:[NSString class]] ? att[@"mime"] : @"image/jpeg";
                 [parts addObject:@{ @"type": @"image", @"mime": mime, @"data": encoded }];
+                [DiagnosticLog log:@"image attachment inlined for API: %@ bytes=%lu mime=%@", name, (unsigned long)data.length, mime];
             }
         } else {
             [parts addObject:@{ @"type": @"text", @"text": [NSString stringWithFormat:@"[Earlier attachment not included: %@]", name] }];
+            [DiagnosticLog log:@"image/pdf attachment not inlined: %@ id=%@ pathReadable=%@", name, att[@"id"] ?: @"-", path && [[NSFileManager defaultManager] isReadableFileAtPath:path] ? @"yes" : @"no"];
         }
     }
 }
@@ -1215,6 +1448,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     if (![self checkKeyForCurrentModel]) return;
     self.streamBuffer = [NSMutableString string];
     self.streamRetryCount = 0;
+    self.didRecoverModel404 = NO;
+    self.didFallbackFromFastMode = NO;
     self.streaming = YES;
     [self updateSendButton];
     [self callJS:@"begin" args:@[]];
@@ -1226,15 +1461,22 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *own = self.conversation[@"system"];
     NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
-    if (inputTokenCap > 0) {
-        // Keep room for conversation history and media; the stored 100k prompt is clipped only for this request.
-        NSUInteger promptBudget = MIN(kMaxSystemPromptChars, ((NSUInteger)inputTokenCap * 2) / 3);
-        if (prompt.length > promptBudget) {
-            NSRange safe = [prompt rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, promptBudget)];
-            prompt = [prompt substringWithRange:safe];
+    // The complete prompt (up to 1M chars) stays on-device. Only a compact, query-selected
+    // excerpt is sent per request. A hard cap keeps long custom instructions from making
+    // requests unnecessarily slow or oversized; 404 is handled separately as a model/path error.
+    NSUInteger promptBudget = inputTokenCap > 0
+        ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
+        : 16000;
+    NSString *query = @"";
+    NSArray *messages = self.conversation[@"messages"];
+    for (NSInteger i = (NSInteger)messages.count - 1; i >= 0; i--) {
+        NSDictionary *message = messages[(NSUInteger)i];
+        if ([message[@"role"] isEqualToString:@"user"] && [message[@"text"] isKindOfClass:[NSString class]]) {
+            query = message[@"text"];
+            break;
         }
     }
-    return prompt ?: @"";
+    return [AppSettings promptText:prompt forQuery:query characterBudget:promptBudget];
 }
 
 // Counts only: never the text itself.
@@ -1261,6 +1503,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     id<ChatStreaming> stream = (provider == AIProviderClaude)
         ? (id<ChatStreaming>)[[ClaudeStream alloc] initWithKey:key model:self.model turns:turns system:system]
         : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:self.model turns:turns system:system];
+    if (provider == AIProviderClaude) {
+        ((ClaudeStream *)stream).useFastSpeed = [AppSettings fastModeEnabled] && !self.didFallbackFromFastMode;
+    }
     stream.useStreaming = useStreaming;
     self.stream = stream;
     if (!self.streamGeneratedAttachments) self.streamGeneratedAttachments = [NSMutableArray array];
@@ -1279,7 +1524,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || data.length == 0) return;
         NSString *errorKey = nil;
-        NSDictionary *attachment = [AttachmentStore importImageData:data name:@"generated-image.jpg"
+        NSString *imageName = @"generated-image.jpg"; // AttachmentStore normalizes all imported images to JPEG.
+        NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
                                                          conversation:me.conversation[@"id"] errorKey:&errorKey];
         if (attachment) {
             [me.streamGeneratedAttachments addObject:attachment];
@@ -1287,6 +1533,13 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         } else {
             [DiagnosticLog log:@"generated image could not be stored: %@", errorKey ?: @"unknown"];
         }
+    };
+    stream.onUsage = ^(long long inputTokens, long long outputTokens) {
+        ChatViewController *me = weakSelf;
+        if (!me || me.stream != weakStream) return;
+        [AppSettings addDailyTokenUsage:(inputTokens + outputTokens)];
+        [me updateDailyTokenPrompt];
+        [DiagnosticLog log:@"usage: input=%lld output=%lld dayTotal=%lld", inputTokens, outputTokens, [AppSettings dailyTokenUsage]];
     };
     stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
         ChatViewController *me = weakSelf;
@@ -1304,6 +1557,101 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     AIProvider currentProvider = [Provider forModelId:self.model];
     BOOL largeClaudeReply = currentProvider == AIProviderClaude && [AppSettings maxOutputTokens] > 21333;
+
+    // A Fast-mode 429/529 can be caused by the separate premium speed pool. Retry once
+    // at standard speed before consuming the general server-retry budget.
+    BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
+    NSString *fastErrorText = [detail lowercaseString] ?: @"";
+    BOOL fastRateLimited = wasFastRequest && (status == 429 || status == 529);
+    BOOL fastRejected = wasFastRequest && (status == 400 || status == 403) &&
+                        ([fastErrorText containsString:@"fast"] || [fastErrorText containsString:@"speed"]);
+    if ((fastRateLimited || fastRejected) && partial.length == 0 &&
+        self.streamGeneratedAttachments.count == 0 && !self.didFallbackFromFastMode) {
+        self.didFallbackFromFastMode = YES;
+        NSTimeInterval fastRetryAfter = self.stream.retryAfterSeconds;
+        self.stream = nil;
+        if (fastRejected) {
+            // The account/model may not have Fast-mode entitlement; stop requesting it on later turns.
+            [AppSettings setFastModeEnabled:NO];
+            [self updateToolButtons];
+        }
+        [DiagnosticLog log:fastRateLimited
+            ? @"Claude Fast mode capacity unavailable; retrying once at standard speed"
+            : @"Claude Fast mode rejected by model/account; retrying once at standard speed and disabling Fast mode"];
+        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(1.0, MIN(60.0, fastRetryAfter)) : 1.0;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fallbackDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
+        });
+        return;
+    }
+
+    // Transient provider overloads (500/502/503/504/529) are retried with exponential
+    // backoff only before any content arrives, so a partial answer is never duplicated.
+    BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
+    BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
+    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
+        NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
+        self.stream = nil;
+        self.streamRetryCount++;
+        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0);
+        NSTimeInterval delay = MAX(backoff, MIN(60.0, providerDelay));
+        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+        });
+        return;
+    }
+
+    // A 404 often means that a cached model id was removed. Refresh once and switch
+    // only when the provider's live model list no longer contains the selected id.
+    if (error == GeminiStreamErrorModelNotFound && status == 404 && partial.length == 0 && !self.didRecoverModel404) {
+        self.stream = nil;
+        self.didRecoverModel404 = YES;
+        NSString *key = [KeyStore loadKeyForProvider:currentProvider] ?: @"";
+        __weak typeof(self) weakSelf = self;
+        GeminiModelsCompletion completion = ^(NSArray *models, GeminiCheckResult result) {
+            ChatViewController *me = weakSelf;
+            if (!me || !me.streaming) return;
+            if (result != GeminiCheckOK || models.count == 0) {
+                me.streaming = NO;
+                me.stream = nil;
+                me.streamBuffer = nil;
+                me.streamGeneratedAttachments = nil;
+                [me callJS:@"end" args:@[@""]];
+                NSString *reason = result == GeminiCheckRateLimited
+                    ? @"API đang giới hạn yêu cầu khi làm mới danh sách model. Hãy đợi rồi thử lại."
+                    : @"Không làm mới được danh sách model để khôi phục lỗi 404. Kiểm tra API key, quyền truy cập và kết nối.";
+                [me callJS:@"error" args:@[reason, @YES]];
+                [me updateSendButton];
+                [DiagnosticLog log:@"404 recovery model refresh failed: result=%ld models=%lu", (long)result, (unsigned long)models.count];
+                return;
+            }
+            [ModelStore saveModels:models forProvider:currentProvider];
+            BOOL selectedStillExists = NO;
+            for (NSDictionary *item in models) if ([item[@"id"] isEqualToString:me.model]) { selectedStillExists = YES; break; }
+            if (!selectedStillExists) {
+                NSString *fallback = [ModelStore defaultModelIdForProvider:currentProvider models:models];
+                if (fallback.length > 0) {
+                    me.model = fallback;
+                    [ModelStore setSelectedModelId:fallback];
+                    me.conversation[@"model"] = fallback;
+                    [me updateModelTitle];
+                    [DiagnosticLog log:@"stale model recovered from HTTP 404: switched to %@", fallback];
+                    [me launchRequestStreaming:me.attemptIsStreaming];
+                    return;
+                }
+            }
+            me.streaming = NO;
+            me.streamBuffer = nil;
+            [me callJS:@"end" args:@[@""]];
+            [me callJS:@"error" args:@[[me messageForError:GeminiStreamErrorModelNotFound status:404 detail:detail], @YES]];
+            [me updateSendButton];
+        };
+        if (currentProvider == AIProviderClaude) [ClaudeClient fetchModelsWithKey:key completion:completion];
+        else [GeminiClient fetchModelsWithKey:key completion:completion];
+        return;
+    }
+
     if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
         self.stream = nil;
         if (largeClaudeReply && self.streamRetryCount < 1) {
