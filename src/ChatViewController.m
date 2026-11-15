@@ -90,6 +90,8 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIButton *fastButton;
 @property (strong, nonatomic) UIButton *mentionButton;
 @property (strong, nonatomic) UILabel *reasoningValueLabel;
+@property (strong, nonatomic) UIButton *reasoningFastButton;
+@property (strong, nonatomic) UILabel *reasoningFastHintLabel;
 @property (strong, nonatomic) UITextView *textView;
 @property (strong, nonatomic) UILabel *placeholderLabel;
 @property (strong, nonatomic) UIButton *sendButton;
@@ -355,62 +357,114 @@ static NSString *ClippedForLog(NSString *text) {
     self.fastButton.enabled = YES; // Unsupported models remain tappable so the UI can explain the limitation.
     self.fastButton.alpha = supportsFast ? 1.0 : 0.42;
     [self.fastButton setTitleColor:(supportsFast && [AppSettings fastModeEnabled]) ? active : [Theme secondaryText] forState:UIControlStateNormal];
-    NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX"][(NSUInteger)[AppSettings reasoningLevel]];
+    NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"][(NSUInteger)[AppSettings reasoningLevel]];
     [self.reasoningButton setTitle:[NSString stringWithFormat:@"🧠 %@", level] forState:UIControlStateNormal];
     [self.searchButton setTitle:[AppSettings webSearchEnabled] ? @"⌕ Tìm ✓" : @"⌕ Tìm kiếm" forState:UIControlStateNormal];
 }
 
 - (void)reasoningTapped {
     [self.view endEditing:YES];
+
     UIViewController *panel = [[UIViewController alloc] init];
-    panel.view.backgroundColor = [Theme background];
-    panel.preferredContentSize = CGSizeMake(320, 210);
-    panel.modalPresentationStyle = UIModalPresentationFormSheet;
+    panel.view.frame = self.view.bounds;
+    panel.view.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.28];
+    panel.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    panel.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 280, 28)];
+    CGFloat cardWidth = MIN(CGRectGetWidth(self.view.bounds) - 36.0, 420.0);
+    CGFloat cardHeight = 370.0;
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake((CGRectGetWidth(self.view.bounds) - cardWidth) / 2.0,
+                                                            (CGRectGetHeight(self.view.bounds) - cardHeight) / 2.0,
+                                                            cardWidth, cardHeight)];
+    card.backgroundColor = [Theme surface];
+    card.layer.cornerRadius = 25.0;
+    card.layer.borderWidth = 1.0;
+    card.layer.borderColor = [Theme border].CGColor;
+    card.layer.shadowColor = [UIColor blackColor].CGColor;
+    card.layer.shadowOpacity = 0.10;
+    card.layer.shadowRadius = 18.0;
+    card.layer.shadowOffset = CGSizeMake(0, 7);
+    [panel.view addSubview:card];
+
+    CGFloat contentWidth = cardWidth - 44.0;
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(22, 22, contentWidth, 36)];
     title.text = @"Mức suy luận";
-    title.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
+    title.font = [UIFont systemFontOfSize:25 weight:UIFontWeightBold];
     title.textColor = [Theme text];
-    [panel.view addSubview:title];
+    [card addSubview:title];
 
-    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 56, 280, 24)];
+    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 75, contentWidth, 34)];
     self.reasoningValueLabel.textAlignment = NSTextAlignmentCenter;
-    self.reasoningValueLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
-    self.reasoningValueLabel.textColor = [Theme accent];
-    [panel.view addSubview:self.reasoningValueLabel];
+    self.reasoningValueLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightSemibold];
+    self.reasoningValueLabel.textColor = [Theme text];
+    [card addSubview:self.reasoningValueLabel];
 
-    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(24, 92, 272, 34)];
+    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(28, 126, contentWidth - 12, 34)];
     slider.minimumValue = 0;
     slider.maximumValue = 4;
     slider.minimumTrackTintColor = [Theme accent];
+    slider.maximumTrackTintColor = [Theme border];
     slider.value = [AppSettings reasoningLevel];
     [slider addTarget:self action:@selector(reasoningSliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [panel.view addSubview:slider];
-    [self reasoningSliderChanged:slider];
+    [card addSubview:slider];
 
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 130, 280, 30)];
-    hint.text = @"Mức cao có thể tăng độ trễ và chi phí. Model không hỗ trợ sẽ dùng mức gần nhất.";
-    hint.font = [UIFont systemFontOfSize:11];
-    hint.numberOfLines = 2;
-    hint.textAlignment = NSTextAlignmentCenter;
-    hint.textColor = [Theme secondaryText];
-    [panel.view addSubview:hint];
+    UILabel *low = [[UILabel alloc] initWithFrame:CGRectMake(22, 169, 100, 25)];
+    low.text = @"Thấp";
+    low.font = [UIFont systemFontOfSize:15];
+    low.textColor = [Theme secondaryText];
+    [card addSubview:low];
+    UILabel *maximum = [[UILabel alloc] initWithFrame:CGRectMake(cardWidth - 122, 169, 100, 25)];
+    maximum.text = @"MAX ×8";
+    maximum.textAlignment = NSTextAlignmentRight;
+    maximum.font = [UIFont systemFontOfSize:15];
+    maximum.textColor = [Theme secondaryText];
+    [card addSubview:maximum];
+
+    self.reasoningFastButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.reasoningFastButton.frame = CGRectMake(20, 213, cardWidth - 40, 52);
+    self.reasoningFastButton.backgroundColor = [Theme background];
+    self.reasoningFastButton.layer.cornerRadius = 16;
+    self.reasoningFastButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    self.reasoningFastButton.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
+    [self.reasoningFastButton setTitleColor:[Theme text] forState:UIControlStateNormal];
+    [self.reasoningFastButton addTarget:self action:@selector(fastTapped) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:self.reasoningFastButton];
+    [self updateReasoningFastButton];
+
+    self.reasoningFastHintLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 277, contentWidth, 42)];
+    self.reasoningFastHintLabel.text = @"Ưu tiên tốc độ; token/chi phí có thể tăng. Tốc độ thực tế phụ thuộc model và API, không bảo đảm đạt ×10.";
+    self.reasoningFastHintLabel.font = [UIFont systemFontOfSize:13];
+    self.reasoningFastHintLabel.numberOfLines = 2;
+    self.reasoningFastHintLabel.textColor = [Theme secondaryText];
+    [card addSubview:self.reasoningFastHintLabel];
 
     UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
-    done.frame = CGRectMake(20, 170, 280, 30);
+    done.frame = CGRectMake(20, 329, cardWidth - 40, 30);
     [done setTitle:L(@"done") forState:UIControlStateNormal];
+    done.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
     [done addTarget:self action:@selector(dismissReasoningPanel) forControlEvents:UIControlEventTouchUpInside];
-    [panel.view addSubview:done];
+    [card addSubview:done];
+
+    [self reasoningSliderChanged:slider];
     [self presentViewController:panel animated:YES completion:nil];
 }
 
 - (void)reasoningSliderChanged:(UISlider *)slider {
     NSInteger level = (NSInteger)lrintf(slider.value);
     [AppSettings setReasoningLevel:(AIReasoningLevel)level];
-    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX"];
+    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"];
     self.reasoningValueLabel.text = names[(NSUInteger)level];
     [self updateToolButtons];
-    [self pushStrings]; // Keep the in-chat reasoning status in sync with the selected level.
+    [self pushStrings];
+}
+
+- (void)updateReasoningFastButton {
+    if (!self.reasoningFastButton) return;
+    BOOL supported = [self currentModelSupportsFastMode];
+    NSString *status = supported ? ([AppSettings fastModeEnabled] ? @"Đang bật" : @"Đang tắt") : @"Model/API không hỗ trợ";
+    [self.reasoningFastButton setTitle:[NSString stringWithFormat:@"⚡  Tăng tốc ×10     %@", status] forState:UIControlStateNormal];
+    self.reasoningFastButton.enabled = supported;
+    self.reasoningFastButton.alpha = supported ? 1.0 : 0.55;
 }
 
 - (void)dismissReasoningPanel {
@@ -425,12 +479,12 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)fastTapped {
     if (![self currentModelSupportsFastMode]) {
-        [self showAlertMessage:@"Tăng tốc ⚡ hiện chỉ hỗ trợ Claude Opus 5.5, Fable 5.2, Mythos 5.2 và một số model Opus 5/4.8 qua Claude API. Gemini generateContent hiện không nhận Fast mode Priority; nút sẽ mở khi chọn model Claude tương thích."];
+        [self showAlertMessage:@"Tăng tốc hiện chỉ gửi được qua Fast mode của một số model Claude tương thích. Gemini và model khác không có tham số tăng tốc tương đương trong API hiện tại."];
         return;
     }
     [AppSettings setFastModeEnabled:![AppSettings fastModeEnabled]];
     [self updateToolButtons];
-    [self showAlertMessage:[AppSettings fastModeEnabled] ? @"Đã bật Fast mode của Claude. Model tương thích có thể tạo output nhanh hơn (tối đa khoảng 2,5×); giá API Fast cao hơn. Mức suy luận bạn chọn vẫn được giữ nguyên." : @"Đã tắt Fast mode; dùng tốc độ tiêu chuẩn."];
+    [self updateReasoningFastButton];
 }
 
 - (void)mentionTapped {
@@ -1589,38 +1643,15 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     // backoff only before any content arrives, so a partial answer is never duplicated.
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    NSString *lowerRateDetail = [[detail lowercaseString] stringByReplacingOccurrencesOfString:@"-" withString:@"_"] ?: @"";
-    // Do not mistake a daily/monthly quota or billing cap for a short rate window.
-    // Google commonly reports both as RESOURCE_EXHAUSTED, but the structured reason
-    // and quotaMetric distinguish RATE_LIMIT_EXCEEDED from a hard quota exhaustion.
-    BOOL dailyOrBillingQuota =
-        [lowerRateDetail containsString:@"quota_exceeded"] ||
-        [lowerRateDetail containsString:@"quotaexceeded"] ||
-        [lowerRateDetail containsString:@"per_day"] ||
-        [lowerRateDetail containsString:@"perday"] ||
-        [lowerRateDetail containsString:@"daily quota"] ||
-        [lowerRateDetail containsString:@"monthly quota"] ||
-        [lowerRateDetail containsString:@"spend limit"] ||
-        [lowerRateDetail containsString:@"spend cap"] ||
-        [lowerRateDetail containsString:@"monthly spend"] ||
-        [lowerRateDetail containsString:@"billing"] ||
-        [lowerRateDetail containsString:@"credit balance"] ||
-        [lowerRateDetail containsString:@"usage limit"];
-    if (transientServer && !dailyOrBillingQuota && partial.length == 0 &&
-        self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 5) {
+    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 :
-                                 (self.streamRetryCount == 2 ? 4.0 :
-                                  (self.streamRetryCount == 3 ? 8.0 :
-                                   (self.streamRetryCount == 4 ? 16.0 : 30.0)));
-        // Honor Retry-After / Google RetryInfo. Never retry sooner than the provider asks.
-        NSTimeInterval delay = MAX(backoff, MIN(900.0, providerDelay));
-        [DiagnosticLog log:@"provider transient HTTP %ld: retry %ld/5 after %.0fs (providerRetryAfter=%.0f)",
-            (long)status, (long)self.streamRetryCount, delay, providerDelay];
+        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0);
+        NSTimeInterval delay = MAX(backoff, MIN(60.0, providerDelay));
+        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
+            if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
         });
         return;
     }
