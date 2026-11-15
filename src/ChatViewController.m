@@ -364,43 +364,73 @@ static NSString *ClippedForLog(NSString *text) {
     [self.view endEditing:YES];
     UIViewController *panel = [[UIViewController alloc] init];
     panel.view.backgroundColor = [Theme background];
-    panel.preferredContentSize = CGSizeMake(320, 210);
+    panel.preferredContentSize = CGSizeMake(360, 330);
     panel.modalPresentationStyle = UIModalPresentationFormSheet;
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 280, 28)];
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(16, 12, 328, 306)];
+    card.backgroundColor = [Theme surface];
+    card.layer.cornerRadius = 22;
+    card.layer.borderWidth = 1;
+    card.layer.borderColor = [Theme border].CGColor;
+    [panel.view addSubview:card];
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 288, 30)];
     title.text = @"Mức suy luận";
-    title.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
+    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightSemibold];
     title.textColor = [Theme text];
-    [panel.view addSubview:title];
+    [card addSubview:title];
 
-    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 56, 280, 24)];
+    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 58, 288, 30)];
     self.reasoningValueLabel.textAlignment = NSTextAlignmentCenter;
-    self.reasoningValueLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
-    self.reasoningValueLabel.textColor = [Theme accent];
-    [panel.view addSubview:self.reasoningValueLabel];
+    self.reasoningValueLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
+    self.reasoningValueLabel.textColor = [Theme text];
+    [card addSubview:self.reasoningValueLabel];
 
-    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(24, 92, 272, 34)];
+    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(22, 98, 284, 34)];
     slider.minimumValue = 0;
     slider.maximumValue = 4;
     slider.minimumTrackTintColor = [Theme accent];
     slider.value = [AppSettings reasoningLevel];
     [slider addTarget:self action:@selector(reasoningSliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [panel.view addSubview:slider];
+    [card addSubview:slider];
+
+    UILabel *low = [[UILabel alloc] initWithFrame:CGRectMake(20, 132, 80, 22)];
+    low.text = @"Thấp";
+    low.font = [UIFont systemFontOfSize:13];
+    low.textColor = [Theme secondaryText];
+    [card addSubview:low];
+
+    UILabel *high = [[UILabel alloc] initWithFrame:CGRectMake(228, 132, 80, 22)];
+    high.text = @"MAX";
+    high.textAlignment = NSTextAlignmentRight;
+    high.font = [UIFont systemFontOfSize:13];
+    high.textColor = [Theme secondaryText];
+    [card addSubview:high];
     [self reasoningSliderChanged:slider];
 
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 130, 280, 30)];
-    hint.text = @"Mức cao có thể tăng độ trễ và chi phí. Model không hỗ trợ sẽ dùng mức gần nhất.";
-    hint.font = [UIFont systemFontOfSize:11];
+    UIButton *fast = [UIButton buttonWithType:UIButtonTypeSystem];
+    fast.frame = CGRectMake(18, 174, 292, 42);
+    fast.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    fast.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [fast setTitle:[NSString stringWithFormat:@"⚡  Tăng tốc     %@", [AppSettings fastModeEnabled] ? @"Đang bật" : @"Đang tắt"] forState:UIControlStateNormal];
+    [fast setTitleColor:[AppSettings fastModeEnabled] ? [Theme accent] : [Theme text] forState:UIControlStateNormal];
+    fast.backgroundColor = [Theme background];
+    fast.layer.cornerRadius = 12;
+    [fast addTarget:self action:@selector(fastTapped) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:fast];
+
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 222, 288, 42)];
+    hint.text = @"Ưu tiên tốc độ; mức tiêu hao token và khả năng hỗ trợ phụ thuộc model/API.";
+    hint.font = [UIFont systemFontOfSize:12];
     hint.numberOfLines = 2;
-    hint.textAlignment = NSTextAlignmentCenter;
     hint.textColor = [Theme secondaryText];
-    [panel.view addSubview:hint];
+    [card addSubview:hint];
 
     UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
-    done.frame = CGRectMake(20, 170, 280, 30);
+    done.frame = CGRectMake(20, 270, 288, 28);
     [done setTitle:L(@"done") forState:UIControlStateNormal];
     [done addTarget:self action:@selector(dismissReasoningPanel) forControlEvents:UIControlEventTouchUpInside];
-    [panel.view addSubview:done];
+    [card addSubview:done];
     [self presentViewController:panel animated:YES completion:nil];
 }
 
