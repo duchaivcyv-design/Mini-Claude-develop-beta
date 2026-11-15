@@ -12,7 +12,8 @@
     retry: 'Retry',
     edit: 'Edit',
     save: 'Save',
-    share: 'Share'
+    share: 'Share',
+    thinking: 'Thinking…'
   };
 
   var msgsEl = document.getElementById('messages');
@@ -254,14 +255,16 @@
       clearErrors();
       var row = el('div', 'row assistant');
       row._streaming = true;
+      var status = el('div', 'thinking-label', S.thinking);
       var body = el('div', 'body md');
       var content = el('div', 'mdc');
       var dot = el('span', 'dot');
       body.appendChild(content);
       body.appendChild(dot);
+      row.appendChild(status);
       row.appendChild(body);
       msgsEl.appendChild(row);
-      current = { row: row, content: content, dot: dot, text: '', timer: null, rendered: false };
+      current = { row: row, content: content, dot: dot, status: status, text: '', timer: null, rendered: false };
       refreshRegenerate();
       toBottom(false);
     },
@@ -270,6 +273,7 @@
       if (!current) { return; }
       current.text += s;
       var c = current;
+      if (c.status && c.status.parentNode) { c.status.parentNode.removeChild(c.status); c.status = null; }
       if (!c.rendered) {            // first words appear immediately
         c.rendered = true;
         renderInto(c.content, c.text);
@@ -288,6 +292,7 @@
       current = null;
       if (c.timer) { clearTimeout(c.timer); c.timer = null; }
       if (c.dot.parentNode) { c.dot.parentNode.removeChild(c.dot); }
+      if (c.status && c.status.parentNode) { c.status.parentNode.removeChild(c.status); }
       c.row._streaming = false;
       var text = (finalText !== undefined && finalText !== null && finalText !== '') ? finalText : c.text;
       if (!text) {
