@@ -7,7 +7,6 @@
 - (instancetype)initWithKey:(NSString *)key model:(NSString *)model turns:(NSArray *)turns system:(NSString *)system;
 
 @property (assign, nonatomic) BOOL useStreaming;
-@property (assign, nonatomic) BOOL useFastSpeed; // Opt-in provider fast inference for supported Claude models only.
 @property (assign, nonatomic) NSTimeInterval retryAfterSeconds;
 @property (copy, nonatomic) void (^onDelta)(NSString *text);
 @property (copy, nonatomic) void (^onImage)(NSData *data, NSString *mimeType);
