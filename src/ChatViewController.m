@@ -364,73 +364,43 @@ static NSString *ClippedForLog(NSString *text) {
     [self.view endEditing:YES];
     UIViewController *panel = [[UIViewController alloc] init];
     panel.view.backgroundColor = [Theme background];
-    panel.preferredContentSize = CGSizeMake(360, 330);
+    panel.preferredContentSize = CGSizeMake(320, 210);
     panel.modalPresentationStyle = UIModalPresentationFormSheet;
 
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(16, 12, 328, 306)];
-    card.backgroundColor = [Theme surface];
-    card.layer.cornerRadius = 22;
-    card.layer.borderWidth = 1;
-    card.layer.borderColor = [Theme border].CGColor;
-    [panel.view addSubview:card];
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 288, 30)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 18, 280, 28)];
     title.text = @"Mức suy luận";
-    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightSemibold];
+    title.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
     title.textColor = [Theme text];
-    [card addSubview:title];
+    [panel.view addSubview:title];
 
-    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 58, 288, 30)];
+    self.reasoningValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 56, 280, 24)];
     self.reasoningValueLabel.textAlignment = NSTextAlignmentCenter;
-    self.reasoningValueLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
-    self.reasoningValueLabel.textColor = [Theme text];
-    [card addSubview:self.reasoningValueLabel];
+    self.reasoningValueLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    self.reasoningValueLabel.textColor = [Theme accent];
+    [panel.view addSubview:self.reasoningValueLabel];
 
-    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(22, 98, 284, 34)];
+    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(24, 92, 272, 34)];
     slider.minimumValue = 0;
     slider.maximumValue = 4;
     slider.minimumTrackTintColor = [Theme accent];
     slider.value = [AppSettings reasoningLevel];
     [slider addTarget:self action:@selector(reasoningSliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [card addSubview:slider];
-
-    UILabel *low = [[UILabel alloc] initWithFrame:CGRectMake(20, 132, 80, 22)];
-    low.text = @"Thấp";
-    low.font = [UIFont systemFontOfSize:13];
-    low.textColor = [Theme secondaryText];
-    [card addSubview:low];
-
-    UILabel *high = [[UILabel alloc] initWithFrame:CGRectMake(228, 132, 80, 22)];
-    high.text = @"MAX";
-    high.textAlignment = NSTextAlignmentRight;
-    high.font = [UIFont systemFontOfSize:13];
-    high.textColor = [Theme secondaryText];
-    [card addSubview:high];
+    [panel.view addSubview:slider];
     [self reasoningSliderChanged:slider];
 
-    UIButton *fast = [UIButton buttonWithType:UIButtonTypeSystem];
-    fast.frame = CGRectMake(18, 174, 292, 42);
-    fast.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    fast.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    [fast setTitle:[NSString stringWithFormat:@"⚡  Tăng tốc     %@", [AppSettings fastModeEnabled] ? @"Đang bật" : @"Đang tắt"] forState:UIControlStateNormal];
-    [fast setTitleColor:[AppSettings fastModeEnabled] ? [Theme accent] : [Theme text] forState:UIControlStateNormal];
-    fast.backgroundColor = [Theme background];
-    fast.layer.cornerRadius = 12;
-    [fast addTarget:self action:@selector(fastTapped) forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:fast];
-
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 222, 288, 42)];
-    hint.text = @"Ưu tiên tốc độ; mức tiêu hao token và khả năng hỗ trợ phụ thuộc model/API.";
-    hint.font = [UIFont systemFontOfSize:12];
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(20, 130, 280, 30)];
+    hint.text = @"Mức cao có thể tăng độ trễ và chi phí. Model không hỗ trợ sẽ dùng mức gần nhất.";
+    hint.font = [UIFont systemFontOfSize:11];
     hint.numberOfLines = 2;
+    hint.textAlignment = NSTextAlignmentCenter;
     hint.textColor = [Theme secondaryText];
-    [card addSubview:hint];
+    [panel.view addSubview:hint];
 
     UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
-    done.frame = CGRectMake(20, 270, 288, 28);
+    done.frame = CGRectMake(20, 170, 280, 30);
     [done setTitle:L(@"done") forState:UIControlStateNormal];
     [done addTarget:self action:@selector(dismissReasoningPanel) forControlEvents:UIControlEventTouchUpInside];
-    [card addSubview:done];
+    [panel.view addSubview:done];
     [self presentViewController:panel animated:YES completion:nil];
 }
 
@@ -1492,11 +1462,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
     // The complete prompt (up to 1M chars) stays on-device. Only a compact, query-selected
-    // excerpt is sent per request. A hard cap keeps long custom instructions from making
-    // requests unnecessarily slow or oversized; 404 is handled separately as a model/path error.
+    // excerpt is sent per request. Keep the full 1M-character instruction locally, but send a much smaller
+    // query-relevant excerpt on each turn. Large system prompts consume provider
+    // input quota again on every request, even when the text is unchanged.
     NSUInteger promptBudget = inputTokenCap > 0
-        ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
-        : 16000;
+        ? MIN((NSUInteger)16000, MAX((NSUInteger)3000, ((NSUInteger)inputTokenCap * 2) / 20))
+        : 8000;
     NSString *query = @"";
     NSArray *messages = self.conversation[@"messages"];
     for (NSInteger i = (NSInteger)messages.count - 1; i >= 0; i--) {
@@ -1617,8 +1588,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     // Transient provider overloads (500/502/503/504/529) are retried with exponential
     // backoff only before any content arrives, so a partial answer is never duplicated.
-    BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
-    BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
+    // Do not automatically hammer a provider after HTTP 429: it can mean a
+    // depleted per-minute/day quota, not a transient server fault. The provider's
+    // exact error detail is shown below so the user can distinguish quota from RPM.
+    BOOL retryableStatus = (status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
+    BOOL transientServer = error == GeminiStreamErrorServer && retryableStatus;
     if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
@@ -1805,7 +1779,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         case GeminiStreamErrorInvalidKey:       base = L(@"err_invalid_key"); break;
         case GeminiStreamErrorPermissionDenied: base = L(@"err_permission"); showDetail = YES; break;
         case GeminiStreamErrorModelNotFound:    base = L(@"err_model_not_found"); break;
-        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); break;
+        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); showDetail = YES; break;
         case GeminiStreamErrorNetwork:          base = L(@"err_network"); showDetail = YES; break;
         case GeminiStreamErrorBlocked:          base = L(@"err_blocked"); break;
         case GeminiStreamErrorEmptyReply:       base = L(@"err_empty_reply"); break;
