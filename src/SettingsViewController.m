@@ -11,6 +11,7 @@
 typedef NS_ENUM(NSInteger, SettingsSection) {
     SettingsSectionKeys = 0,
     SettingsSectionAssistant,
+    SettingsSectionTokenUsage, // Thêm section hiển thị token
     SettingsSectionGeneral,
     SettingsSectionHistory,
     SettingsSectionAbout,
@@ -40,7 +41,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.tableView reloadData];   // keys / system prompt may have changed on the next screen
+    [self.tableView reloadData];
 }
 
 #pragma mark - Helpers
@@ -68,16 +69,20 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == SettingsSectionKeys || section == SettingsSectionAbout) return 2;
     if (section == SettingsSectionAssistant) return 4;
+    if (section == SettingsSectionTokenUsage) return 2; // 1 dòng cho ngày, 1 dòng cho tuần
     return 1;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return section == SettingsSectionKeys ? L(@"keys_header") : nil;
+    if (section == SettingsSectionKeys) return L(@"keys_header");
+    if (section == SettingsSectionTokenUsage) return @"THỐNG KÊ TOKEN SỬ DỤNG";
+    return nil;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == SettingsSectionKeys) return L(@"keys_footer");
     if (section == SettingsSectionAssistant) return L(@"attach_memory_footer");
+    if (section == SettingsSectionTokenUsage) return @"Hạn mức ngày: 24B (Reset mỗi ngày). Hạn mức tuần: 1T tính từ Thứ Hai đến Chủ Nhật.";
     if (section == SettingsSectionAbout) return L(@"privacy_footer");
     return nil;
 }
@@ -87,8 +92,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     cell.backgroundColor = [Theme surface];
     cell.textLabel.font = [UIFont systemFontOfSize:17];
     cell.textLabel.textColor = [Theme text];
-    cell.detailTextLabel.font = [UIFont systemFontOfSize:16];
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:15];
     cell.detailTextLabel.textColor = [Theme secondaryText];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone; // Mặc định các ô thống kê không cần bấm chọn
 
     switch (indexPath.section) {
         case SettingsSectionKeys: {
@@ -96,6 +102,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             cell.textLabel.text = provider == AIProviderClaude ? L(@"api_key_claude") : L(@"api_key_gemini");
             cell.detailTextLabel.text = [self maskedKeyFor:provider];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         }
         case SettingsSectionAssistant:
@@ -113,24 +120,40 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
                 cell.detailTextLabel.text = [self contextMemoryName];
             }
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
+        case SettingsSectionTokenUsage: {
+            if (indexPath.row == 0) {
+                cell.textLabel.text = @"Token hôm nay (Ngày)";
+                long long used = [AppSettings dailyTokenUsage];
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%lld / 24B", used];
+            } else {
+                cell.textLabel.text = @"Token tuần này (Thứ 2 - CN)";
+                long long used = [AppSettings weeklyTokenUsage];
+                CGFloat percent = [AppSettings weeklyUsagePercentage];
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f%% (1T)", percent];
+            }
+            break;
+        }
         case SettingsSectionGeneral:
             cell.textLabel.text = L(@"language");
             cell.detailTextLabel.text = [self languageName];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         case SettingsSectionHistory:
             cell.textLabel.text = L(@"clear_history");
             cell.textLabel.textColor = [Theme error];
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         default:
             if (indexPath.row == 0) {
                 cell.textLabel.text = L(@"version");
                 cell.detailTextLabel.text = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-                cell.selectionStyle = UITableViewCellSelectionStyleNone;
             } else {
                 cell.textLabel.text = L(@"diagnostics_title");
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             }
             break;
     }
@@ -186,7 +209,6 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)contextMemoryName {
-    // Hiển thị trạng thái Vô thời hạn cho lịch sử AI theo yêu cầu mới
     return @"Vô thời hạn (Tùy server API)";
 }
 
@@ -227,7 +249,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (void)chooseAttachmentMemory {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_memory_title")
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_title")
                                                                    message:nil
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     NSArray *options = @[ @[@1, L(@"attach_memory_1")], @[@3, L(@"attach_memory_3")], @[@0, L(@"attach_memory_all")] ];
