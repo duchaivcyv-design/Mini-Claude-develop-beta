@@ -1,130 +1,27 @@
-#import "ModelStore.h"
-#import "KeyStore.h"
+#import <Foundation/Foundation.h>
+#import "Provider.h"
 
-static NSString *const kSelectedModelKey = @"selectedModel";
+// Remembers each provider's model list (fetched live with the user's key) and the chosen model.
+// Model names are never hard-coded: they change over time and differ per account.
+@interface ModelStore : NSObject
 
-// The Gemini key is the one earlier versions used, so a cached list survives an update.
-static NSString *CacheKeyFor(AIProvider provider) {
-    return provider == AIProviderClaude ? @"cachedModels.claude" : @"cachedModels";
-}
++ (NSArray *)cachedModelsForProvider:(AIProvider)provider;          // @[ @{ @"id":..., @"name":... } ]
++ (void)saveModels:(NSArray *)models forProvider:(AIProvider)provider;
++ (NSInteger)maxOutputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider; // 0 if the provider did not report a cap
++ (NSInteger)maxInputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider;   // 0 if the provider did not report a cap
 
-@implementation ModelStore
++ (NSString *)selectedModelId;                                      // nil if the user never chose one
++ (void)setSelectedModelId:(NSString *)modelId;
 
-+ (NSArray *)cachedModelsForProvider:(AIProvider)provider {
-    id value = [[NSUserDefaults standardUserDefaults] objectForKey:CacheKeyFor(provider)];
-    if (![value isKindOfClass:[NSArray class]]) return @[];
-    NSMutableArray *out = [NSMutableArray array];
-    for (id item in (NSArray *)value) {
-        if ([item isKindOfClass:[NSDictionary class]] && [item[@"id"] isKindOfClass:[NSString class]]) [out addObject:item];
-    }
-    return out;
-}
+// Hint by model family, not by version: Gemini's Flash / Flash-Lite families are the ones on Google's free tier;
+// Pro, Argon and similar usually need billing. The API does not report this, so it is a hint, not a guarantee.
++ (BOOL)isLikelyFreeModelId:(NSString *)modelId;
 
-+ (void)saveModels:(NSArray *)models forProvider:(AIProvider)provider {
-    [[NSUserDefaults standardUserDefaults] setObject:models forKey:CacheKeyFor(provider)];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+// A sensible default for one provider. Gemini: the newest stable "gemini-X.Y-flash", else a non-preview Flash,
+// else any Flash, else the first. Claude: the newest Sonnet, else the first.
++ (NSString *)defaultModelIdForProvider:(AIProvider)provider models:(NSArray *)models;
 
-+ (NSInteger)maxOutputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider {
-    if (modelId.length == 0) return 0;
-    NSString *field = provider == AIProviderClaude ? @"max_tokens" : @"outputTokenLimit";
-    for (NSDictionary *model in [self cachedModelsForProvider:provider]) {
-        if (![model[@"id"] isEqualToString:modelId]) continue;
-        id value = model[field];
-        if ([value respondsToSelector:@selector(integerValue)]) {
-            NSInteger cap = [value integerValue];
-            return cap > 0 ? cap : 0;
-        }
-        return 0;
-    }
-    return 0;
-}
-
-+ (NSInteger)maxInputTokensForModelId:(NSString *)modelId provider:(AIProvider)provider {
-    if (modelId.length == 0) return 0;
-    NSString *field = provider == AIProviderClaude ? @"max_input_tokens" : @"inputTokenLimit";
-    for (NSDictionary *model in [self cachedModelsForProvider:provider]) {
-        if (![model[@"id"] isEqualToString:modelId]) continue;
-        id value = model[field];
-        if ([value respondsToSelector:@selector(integerValue)]) {
-            NSInteger cap = [value integerValue];
-            return cap > 0 ? cap : 0;
-        }
-        return 0;
-    }
-    return 0;
-}
-
-+ (NSString *)selectedModelId {
-    NSString *value = [[NSUserDefaults standardUserDefaults] stringForKey:kSelectedModelKey];
-    return value.length > 0 ? value : nil;
-}
-
-+ (void)setSelectedModelId:(NSString *)modelId {
-    if (modelId.length > 0) {
-        [[NSUserDefaults standardUserDefaults] setObject:modelId forKey:kSelectedModelKey];
-    } else {
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:kSelectedModelKey];
-    }
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-
-+ (BOOL)isLikelyFreeModelId:(NSString *)modelId {
-    NSString *lower = [modelId lowercaseString];
-    // Chấp nhận tất cả các model thuộc họ flash, nano hoặc có tiền tố gemini/nano
-    if ([lower rangeOfString:@"flash"].location != NSNotFound || 
-        [lower rangeOfString:@"nano"].location != NSNotFound ||
-        [lower rangeOfString:@"gemini-"].location != NSNotFound) {
-        
-        // Các biến thể thu phí nặng (nếu có thể tùy chỉnh chặn ở đây)
-        NSArray *paidVariants = @[@"omni-locked"];
-        for (NSString *token in paidVariants) {
-            if ([lower rangeOfString:token].location != NSNotFound) return NO;
-        }
-        return YES;
-    }
-    return NO;
-}
-
-+ (NSString *)defaultGeminiModelIdFrom:(NSArray *)models {
-    // 1) Ưu tiên tìm các model flash hoặc nano mới nhất
-    for (NSDictionary *model in models) {
-        NSString *modelId = model[@"id"];
-        NSString *lower = [modelId lowercaseString];
-        if ([lower rangeOfString:@"flash"].location != NSNotFound || [lower rangeOfString:@"nano"].location != NSNotFound) {
-            return modelId;
-        }
-    }
-
-    // 2) Bất kỳ model nào hợp lệ từ danh sách
-    for (NSDictionary *model in models) {
-        if ([self isLikelyFreeModelId:model[@"id"]]) return model[@"id"];
-    }
-
-    // 3) Mặc định lấy model đầu tiên nếu không khớp
-    return models.firstObject[@"id"];
-}
-
-+ (NSString *)defaultClaudeModelIdFrom:(NSArray *)models {
-    for (NSDictionary *model in models) {
-        if ([model[@"id"] rangeOfString:@"sonnet"].location != NSNotFound) return model[@"id"];
-    }
-    return models.firstObject[@"id"];
-}
-
-+ (NSString *)defaultModelIdForProvider:(AIProvider)provider models:(NSArray *)models {
-    if (models.count == 0) return nil;
-    return provider == AIProviderClaude ? [self defaultClaudeModelIdFrom:models] : [self defaultGeminiModelIdFrom:models];
-}
-
-+ (NSString *)defaultModelIdAcrossProviders {
-    for (NSNumber *value in [Provider all]) {
-        AIProvider provider = (AIProvider)value.integerValue;
-        if (![KeyStore hasKeyForProvider:provider]) continue;
-        NSString *modelId = [self defaultModelIdForProvider:provider models:[self cachedModelsForProvider:provider]];
-        if (modelId.length > 0) return modelId;
-    }
-    return nil;
-}
+// A default across providers: Gemini first (it has a free tier), then Claude; only providers that have a key and a cached list.
++ (NSString *)defaultModelIdAcrossProviders;
 
 @end
