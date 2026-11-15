@@ -70,54 +70,41 @@ static NSString *CacheKeyFor(AIProvider provider) {
 }
 
 + (BOOL)isLikelyFreeModelId:(NSString *)modelId {
-    if ([modelId rangeOfString:@"flash"].location == NSNotFound) return NO;
-    // Flash-branded variants that Google lists as not available on the free tier.
-    NSArray *paidVariants = @[@"omni", @"cyber"];
-    for (NSString *token in paidVariants) {
-        if ([modelId rangeOfString:token].location != NSNotFound) return NO;
+    NSString *lower = [modelId lowercaseString];
+    // Chấp nhận tất cả các model có flash, nano hoặc phiên bản mới
+    if ([lower rangeOfString:@"flash"].location != NSNotFound || 
+        [lower rangeOfString:@"nano"].location != NSNotFound ||
+        [lower rangeOfString:@"gemini-"].location != NSNotFound) {
+        // Các biến thể thu phí nặng (nếu cần lọc, tuỳ chỉnh ở đây)
+        NSArray *paidVariants = @[@"omni-locked"];
+        for (NSString *token in paidVariants) {
+            if ([lower rangeOfString:token].location != NSNotFound) return NO;
+        }
+        return YES;
     }
-    return YES;
+    return NO;
 }
 
 + (NSString *)defaultGeminiModelIdFrom:(NSArray *)models {
-    // 1) newest stable "gemini-<version>-flash"
-    NSRegularExpression *stable =
-        [NSRegularExpression regularExpressionWithPattern:@"^gemini-(\\d+(?:\\.\\d+)?)-flash$" options:0 error:nil];
-    NSString *bestId = nil;
-    double bestVersion = -1;
+    // 1) Ưu tiên tìm các model flash hoặc nano mới nhất
     for (NSDictionary *model in models) {
         NSString *modelId = model[@"id"];
-        NSTextCheckingResult *match = [stable firstMatchInString:modelId options:0 range:NSMakeRange(0, modelId.length)];
-        if (match) {
-            double version = [[modelId substringWithRange:[match rangeAtIndex:1]] doubleValue];
-            if (version > bestVersion) { bestVersion = version; bestId = modelId; }
+        NSString *lower = [modelId lowercaseString];
+        if ([lower rangeOfString:@"flash"].location != NSNotFound || [lower rangeOfString:@"nano"].location != NSNotFound) {
+            return modelId;
         }
     }
-    if (bestId) return bestId;
 
-    // 2) any free-tier-family model that is not a preview/experimental/lite variant
-    NSArray *avoid = @[@"lite", @"preview", @"exp", @"8b", @"thinking"];
-    for (NSDictionary *model in models) {
-        NSString *modelId = model[@"id"];
-        if (![self isLikelyFreeModelId:modelId]) continue;
-        BOOL skip = NO;
-        for (NSString *token in avoid) {
-            if ([modelId rangeOfString:token].location != NSNotFound) { skip = YES; break; }
-        }
-        if (!skip) return modelId;
-    }
-
-    // 3) any model from the free-tier families, even a lite/preview variant: better than a paid one
+    // 2) Bất kỳ model nào hợp lệ từ danh sách
     for (NSDictionary *model in models) {
         if ([self isLikelyFreeModelId:model[@"id"]]) return model[@"id"];
     }
 
-    // 4) nothing recognizable: whatever comes first
+    // 3) Mặc định lấy model đầu tiên nếu không khớp
     return models.firstObject[@"id"];
 }
 
 + (NSString *)defaultClaudeModelIdFrom:(NSArray *)models {
-    // The API lists the newest models first, so the first Sonnet is the newest Sonnet.
     for (NSDictionary *model in models) {
         if ([model[@"id"] rangeOfString:@"sonnet"].location != NSNotFound) return model[@"id"];
     }
