@@ -13,8 +13,6 @@ static NSString *const kDailyUsageKey = @"dailyTokenUsage";
 static NSString *const kDailyDateKey = @"dailyTokenUsageDate";
 static NSString *const kDailyBudgetKey = @"dailyTokenBudget";
 
-// Keep a single in-memory copy and chunk index so a 100k-1M character prompt is
-// not re-read and re-split for every chat turn. Cache is invalidated on save.
 static NSString *gPromptTextCache = nil;
 static BOOL gPromptTextCacheLoaded = NO;
 static NSString *gPromptChunkSource = nil;
@@ -100,7 +98,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         if (fromFile.length > 0) {
             gPromptTextCache = [[self cleanedPrompt:fromFile] copy];
         } else {
-            // Migrate prompts saved by versions that stored the whole string in NSUserDefaults.
             NSString *legacy = [[NSUserDefaults standardUserDefaults] stringForKey:kSystemPromptKey];
             if (legacy.length > 0) {
                 gPromptTextCache = [[self cleanedPrompt:legacy] copy];
@@ -136,8 +133,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [defaults synchronize];
 }
 
-// Keep the full 1M-character instruction file locally, but send only relevant excerpts
-// that fit the selected model's input window. This avoids oversized requests and 503s.
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget {
     return [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
 }
@@ -167,7 +162,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     NSUInteger reserve = MIN((NSUInteger)2400, MAX((NSUInteger)800, budget / 12));
     NSUInteger used = 0;
 
-    // Keep opening instructions plus a small final section, then select relevant chunks.
     [selected addIndex:0];
     used = [chunks[0][@"length"] unsignedIntegerValue];
     if (chunks.count > 1) {
@@ -202,7 +196,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         used += length;
     }
 
-    // If the query has no useful overlap, fill the remaining budget from newest chunks backwards.
     if (terms.count == 0 || selected.count <= 2) {
         for (NSInteger i = (NSInteger)chunks.count - 2; i >= 1; i--) {
             if ([selected containsIndex:(NSUInteger)i]) continue;
@@ -237,21 +230,26 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     if (count != 0 && count != 1 && count != 3) count = 3;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
+
+// Cập nhật giới hạn câu trả lời mặc định thành 24B (hoặc mức token tối đa mở rộng)
 + (NSInteger)maxOutputTokens {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
-    return (value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 8192;
+    // Nếu chưa lưu hoặc có giá trị cũ, mặc định là mức cao tương đương 24B hoặc 128000
+    return (value > 0) ? value : 128000;
 }
 + (void)setMaxOutputTokens:(NSInteger)count {
-    if (count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 8192;
+    if (count < 2048) count = 128000;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
 }
+
+// Nới lỏng độ dài lịch sử gửi cho AI thành vô thời hạn (vô hạn, phụ thuộc server API)
 + (NSUInteger)contextLimitChars {
-    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
-    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
+    // Trả về mức cực lớn để không bị giới hạn cứng ở client (vô thời hạn theo khả năng server API)
+    return (NSUInteger)200000000; 
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
-    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
+    // Luôn giữ ở mức không giới hạn hoặc ghi nhận theo ý muốn
+    [[NSUserDefaults standardUserDefaults] setInteger:200000000 forKey:kContextLimitCharsKey];
 }
 
 + (AIReasoningLevel)reasoningLevel {
@@ -294,17 +292,14 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setObject:@(current) forKey:kDailyUsageKey];
 }
 
+// Cố định định mức ngân sách token là 24B để hiển thị động (Ví dụ: 0/24B, 21B/24B)
 + (long long)dailyTokenBudget {
-    id budgetObject = [[NSUserDefaults standardUserDefaults] objectForKey:kDailyBudgetKey];
-    long long value = [budgetObject longLongValue];
-
-    return value > 0 ? value : 24000000000LL;
+    return 24000000000LL; // 24B chuẩn cố định
 }
 
 + (void)setDailyTokenBudget:(long long)count {
-    if (count < 1) count = 24000000000LL;
-
-    [[NSUserDefaults standardUserDefaults] setObject:@(count) forKey:kDailyBudgetKey];
+    // Luôn duy trì mức 24B theo yêu cầu
+    [[NSUserDefaults standardUserDefaults] setObject:@(24000000000LL) forKey:kDailyBudgetKey];
 }
 
 @end
