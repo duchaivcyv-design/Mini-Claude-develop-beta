@@ -1462,12 +1462,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
     // The complete prompt (up to 1M chars) stays on-device. Only a compact, query-selected
-    // excerpt is sent per request. Keep the full 1M-character instruction locally, but send a much smaller
-    // query-relevant excerpt on each turn. Large system prompts consume provider
-    // input quota again on every request, even when the text is unchanged.
+    // excerpt is sent per request. A hard cap keeps long custom instructions from making
+    // requests unnecessarily slow or oversized; 404 is handled separately as a model/path error.
     NSUInteger promptBudget = inputTokenCap > 0
-        ? MIN((NSUInteger)16000, MAX((NSUInteger)3000, ((NSUInteger)inputTokenCap * 2) / 20))
-        : 8000;
+        ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
+        : 16000;
     NSString *query = @"";
     NSArray *messages = self.conversation[@"messages"];
     for (NSInteger i = (NSInteger)messages.count - 1; i >= 0; i--) {
@@ -1588,20 +1587,40 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     // Transient provider overloads (500/502/503/504/529) are retried with exponential
     // backoff only before any content arrives, so a partial answer is never duplicated.
-    // Do not automatically hammer a provider after HTTP 429: it can mean a
-    // depleted per-minute/day quota, not a transient server fault. The provider's
-    // exact error detail is shown below so the user can distinguish quota from RPM.
-    BOOL retryableStatus = (status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
-    BOOL transientServer = error == GeminiStreamErrorServer && retryableStatus;
-    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
+    BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
+    BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
+    NSString *lowerRateDetail = [[detail lowercaseString] stringByReplacingOccurrencesOfString:@"-" withString:@"_"] ?: @"";
+    // Do not mistake a daily/monthly quota or billing cap for a short rate window.
+    // Google commonly reports both as RESOURCE_EXHAUSTED, but the structured reason
+    // and quotaMetric distinguish RATE_LIMIT_EXCEEDED from a hard quota exhaustion.
+    BOOL dailyOrBillingQuota =
+        [lowerRateDetail containsString:@"quota_exceeded"] ||
+        [lowerRateDetail containsString:@"quotaexceeded"] ||
+        [lowerRateDetail containsString:@"per_day"] ||
+        [lowerRateDetail containsString:@"perday"] ||
+        [lowerRateDetail containsString:@"daily quota"] ||
+        [lowerRateDetail containsString:@"monthly quota"] ||
+        [lowerRateDetail containsString:@"spend limit"] ||
+        [lowerRateDetail containsString:@"spend cap"] ||
+        [lowerRateDetail containsString:@"monthly spend"] ||
+        [lowerRateDetail containsString:@"billing"] ||
+        [lowerRateDetail containsString:@"credit balance"] ||
+        [lowerRateDetail containsString:@"usage limit"];
+    if (transientServer && !dailyOrBillingQuota && partial.length == 0 &&
+        self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 5) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0);
-        NSTimeInterval delay = MAX(backoff, MIN(60.0, providerDelay));
-        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
+        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 :
+                                 (self.streamRetryCount == 2 ? 4.0 :
+                                  (self.streamRetryCount == 3 ? 8.0 :
+                                   (self.streamRetryCount == 4 ? 16.0 : 30.0)));
+        // Honor Retry-After / Google RetryInfo. Never retry sooner than the provider asks.
+        NSTimeInterval delay = MAX(backoff, MIN(900.0, providerDelay));
+        [DiagnosticLog log:@"provider transient HTTP %ld: retry %ld/5 after %.0fs (providerRetryAfter=%.0f)",
+            (long)status, (long)self.streamRetryCount, delay, providerDelay];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+            if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
         return;
     }
@@ -1779,7 +1798,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         case GeminiStreamErrorInvalidKey:       base = L(@"err_invalid_key"); break;
         case GeminiStreamErrorPermissionDenied: base = L(@"err_permission"); showDetail = YES; break;
         case GeminiStreamErrorModelNotFound:    base = L(@"err_model_not_found"); break;
-        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); showDetail = YES; break;
+        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); break;
         case GeminiStreamErrorNetwork:          base = L(@"err_network"); showDetail = YES; break;
         case GeminiStreamErrorBlocked:          base = L(@"err_blocked"); break;
         case GeminiStreamErrorEmptyReply:       base = L(@"err_empty_reply"); break;
