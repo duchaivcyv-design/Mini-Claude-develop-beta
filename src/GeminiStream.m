@@ -189,7 +189,7 @@ didReceiveResponse:(NSURLResponse *)response
                 NSDate *retryDate = [formatter dateFromString:[rawValue description]];
                 if (retryDate) delay = [retryDate timeIntervalSinceNow];
             }
-            self.retryAfterSeconds = MIN(60.0, MAX(0.0, delay));
+            self.retryAfterSeconds = MIN(900.0, MAX(0.0, delay));
             break;
         }
     }
@@ -222,6 +222,8 @@ didReceiveResponse:(NSURLResponse *)response
     } else if (self.status != 200) {
         NSString *message = [self messageFromErrorBody:self.errorBody];
         detail = message;
+        NSTimeInterval bodyRetryDelay = [self retryDelayFromErrorBody:self.errorBody];
+        if (bodyRetryDelay > self.retryAfterSeconds) self.retryAfterSeconds = bodyRetryDelay;
         result = [GeminiStream errorForStatus:self.status message:message];
     } else {
         if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
@@ -351,11 +353,51 @@ didReceiveResponse:(NSURLResponse *)response
     id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
     // Some responses wrap the error object in an array.
     if ([json isKindOfClass:[NSArray class]]) json = [(NSArray *)json firstObject];
-    if ([json isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *err = json[@"error"];
-        if ([err isKindOfClass:[NSDictionary class]] && [err[@"message"] isKindOfClass:[NSString class]]) return err[@"message"];
+    if (![json isKindOfClass:[NSDictionary class]]) return nil;
+
+    NSDictionary *err = [json[@"error"] isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
+    if (!err) return nil;
+    NSMutableArray<NSString *> *diagnostics = [NSMutableArray array];
+    NSString *message = [err[@"message"] isKindOfClass:[NSString class]] ? err[@"message"] : nil;
+    NSString *status = [err[@"status"] isKindOfClass:[NSString class]] ? err[@"status"] : nil;
+    if (message.length) [diagnostics addObject:message];
+    if (status.length) [diagnostics addObject:[NSString stringWithFormat:@"providerStatus=%@", status]];
+
+    // Preserve structured quota reasons/metrics. The controller uses these to
+    // distinguish a short rate window from a daily/monthly quota that cannot recover
+    // by immediately repeating the same request.
+    NSArray *details = [err[@"details"] isKindOfClass:[NSArray class]] ? err[@"details"] : @[];
+    for (id item in details) {
+        if (![item isKindOfClass:[NSDictionary class]]) continue;
+        NSString *reason = [item[@"reason"] isKindOfClass:[NSString class]] ? item[@"reason"] : nil;
+        NSDictionary *metadata = [item[@"metadata"] isKindOfClass:[NSDictionary class]] ? item[@"metadata"] : nil;
+        NSString *quotaMetric = [metadata[@"quotaMetric"] isKindOfClass:[NSString class]] ? metadata[@"quotaMetric"] : nil;
+        NSString *quotaId = [metadata[@"quotaId"] isKindOfClass:[NSString class]] ? metadata[@"quotaId"] : nil;
+        NSString *retryDelay = [item[@"retryDelay"] isKindOfClass:[NSString class]] ? item[@"retryDelay"] : nil;
+        if (reason.length) [diagnostics addObject:[NSString stringWithFormat:@"reason=%@", reason]];
+        if (quotaMetric.length) [diagnostics addObject:[NSString stringWithFormat:@"quotaMetric=%@", quotaMetric]];
+        if (quotaId.length) [diagnostics addObject:[NSString stringWithFormat:@"quotaId=%@", quotaId]];
+        if (retryDelay.length) [diagnostics addObject:[NSString stringWithFormat:@"retryDelay=%@", retryDelay]];
     }
-    return nil;
+    return diagnostics.count ? [diagnostics componentsJoinedByString:@" | "] : nil;
+}
+
+- (NSTimeInterval)retryDelayFromErrorBody:(NSData *)body {
+    if (body.length == 0) return 0;
+    id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
+    if ([json isKindOfClass:[NSArray class]]) json = [(NSArray *)json firstObject];
+    NSDictionary *errorObject = [json isKindOfClass:[NSDictionary class]] && [json[@"error"] isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
+    NSArray *details = [errorObject[@"details"] isKindOfClass:[NSArray class]] ? errorObject[@"details"] : @[];
+    for (id item in details) {
+        if (![item isKindOfClass:[NSDictionary class]]) continue;
+        NSString *type = [item[@"@type"] isKindOfClass:[NSString class]] ? item[@"@type"] : @"";
+        NSString *retryDelay = [item[@"retryDelay"] isKindOfClass:[NSString class]] ? item[@"retryDelay"] : nil;
+        if ([type containsString:@"RetryInfo"] && retryDelay.length > 1 && [retryDelay hasSuffix:@"s"]) {
+            double seconds = [[retryDelay substringToIndex:retryDelay.length - 1] doubleValue];
+            if (seconds > 0) return MIN(900.0, seconds);
+        }
+    }
+    return 0;
 }
 
 + (GeminiStreamError)errorForStatus:(NSInteger)status message:(NSString *)message {
