@@ -97,23 +97,23 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIButton *sendButton;
 @property (strong, nonatomic) UIButton *modelButton;
 @property (assign, nonatomic) CGFloat keyboardOverlap;
-@property (copy, nonatomic) NSString *selectedMentionItem; // Lưu mục được chọn từ @ (ví dụ: @"Docs", @"Sheet", ...)
+@property (copy, nonatomic) NSString *selectedMentionItem; // Lưu mục được chọn từ @
 
 @property (strong, nonatomic) NSMutableDictionary *conversation;
 @property (copy, nonatomic) NSString *model;
 @property (strong, nonatomic) id<ChatStreaming> stream;
 @property (assign, nonatomic) BOOL streaming;
 @property (assign, nonatomic) CFAbsoluteTime requestStartTime;
-@property (assign, nonatomic) NSUInteger greetingIndex;     // which of the kGreetingCount lines this empty chat shows
-@property (copy, nonatomic) NSString *shownGreeting;        // what the page currently shows, to avoid redrawing for nothing
-@property (assign, nonatomic) BOOL attemptIsStreaming;   // the current request is a live stream (vs. single-shot fallback)
+@property (assign, nonatomic) NSUInteger greetingIndex;
+@property (copy, nonatomic) NSString *shownGreeting;
+@property (assign, nonatomic) BOOL attemptIsStreaming;
 @property (assign, nonatomic) NSInteger streamRetryCount;
 @property (assign, nonatomic) BOOL didRecoverModel404;
 @property (assign, nonatomic) BOOL didFallbackFromFastMode;
 @property (strong, nonatomic) NSMutableString *streamBuffer;
 @property (strong, nonatomic) NSMutableArray *streamGeneratedAttachments;
 
-@property (strong, nonatomic) NSMutableArray *pendingAttachments;   // attachments waiting to be sent with the next message
+@property (strong, nonatomic) NSMutableArray *pendingAttachments;
 @property (assign, nonatomic) NSInteger importsInFlight;
 @end
 
@@ -150,7 +150,6 @@ static NSString *ClippedForLog(NSString *text) {
     [center addObserver:self selector:@selector(historyCleared:) name:kNotifHistoryCleared object:nil];
     [center addObserver:self selector:@selector(conversationDeleted:) name:kNotifConversationDeleted object:nil];
 
-    // Attachment folders left behind by chats that were never saved (e.g. the app was closed with files attached).
     NSMutableSet *keep = [NSMutableSet set];
     for (NSDictionary *entry in [ConversationStore allEntries]) {
         if (entry[@"id"]) [keep addObject:entry[@"id"]];
@@ -168,7 +167,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self loadWebPage];
     [self refreshModels];
 
-    // If the chat page never reports in, tell the user instead of showing a blank screen.
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         ChatViewController *me = weakSelf;
@@ -185,7 +183,7 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self ensureModelMatchesKeys];   // a key may have been added or removed in Settings
+    [self ensureModelMatchesKeys];
     [self updateModelTitle];
     [self updateDailyTokenPrompt];
     [self updateToolButtons];
@@ -296,8 +294,8 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat stripHeight = showStrip ? kStripHeight : 0;
 
     CGFloat boxWidth = width - 24;
-    CGFloat leftPad = 40;     // room for the attach button
-    CGFloat rightPad = 44;    // room for the send button
+    CGFloat leftPad = 40;
+    CGFloat rightPad = 44;
     CGFloat textWidth = boxWidth - leftPad - rightPad;
     CGFloat fit = [self.textView sizeThatFits:CGSizeMake(textWidth, CGFLOAT_MAX)].height;
     CGFloat textHeight = MIN(MAX(fit, 38), kMaxInputHeight);
@@ -355,7 +353,7 @@ static NSString *ClippedForLog(NSString *text) {
     [self.reasoningButton setTitleColor:active forState:UIControlStateNormal];
     [self.searchButton setTitleColor:[AppSettings webSearchEnabled] ? active : [Theme secondaryText] forState:UIControlStateNormal];
     BOOL supportsFast = [self currentModelSupportsFastMode];
-    self.fastButton.enabled = YES; // Unsupported models remain tappable so the UI can explain the limitation.
+    self.fastButton.enabled = YES;
     self.fastButton.alpha = supportsFast ? 1.0 : 0.42;
     [self.fastButton setTitleColor:(supportsFast && [AppSettings fastModeEnabled]) ? active : [Theme secondaryText] forState:UIControlStateNormal];
     NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"][(NSUInteger)[AppSettings reasoningLevel]];
@@ -569,10 +567,8 @@ static NSString *ClippedForLog(NSString *text) {
         }]];
     }
     
-    // Nút hủy
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
     
-    // Cấu hình Popover cho iPad tránh crash
     if (sheet.popoverPresentationController) {
         sheet.popoverPresentationController.sourceView = self.mentionButton;
         sheet.popoverPresentationController.sourceRect = self.mentionButton.bounds;
@@ -649,7 +645,7 @@ static NSString *ClippedForLog(NSString *text) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     UIViewController *top = self;
-    while (top.presentedViewController) top = top.presentedViewController;   // a picker may still be on screen
+    while (top.presentedViewController) top = top.presentedViewController;
     [top presentViewController:alert animated:YES completion:nil];
 }
 
@@ -662,12 +658,9 @@ static NSString *ClippedForLog(NSString *text) {
     return text ?: @"";
 }
 
-// The page is assembled in memory and loaded as a string, so WebKit never needs file access
-// to the app bundle (which is the fragile part for unsandboxed jailbreak apps).
 - (void)loadWebPage {
     self.webReady = NO;
     NSString *html = [self resourceText:@"index" ext:@"html"];
-    // Order matters: the libraries first (markdown-it, highlight.js, KaTeX), then our renderer, then the chat page itself.
     NSString *css = [[self resourceText:@"vendor" ext:@"css"] stringByAppendingFormat:@"\n%@", [self resourceText:@"chat" ext:@"css"]];
     NSString *js = [NSString stringWithFormat:@"%@\n%@\n%@", [self resourceText:@"vendor" ext:@"js"],
                                               [self resourceText:@"render" ext:@"js"], [self resourceText:@"chat" ext:@"js"]];
@@ -687,7 +680,6 @@ static NSString *ClippedForLog(NSString *text) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:args options:0 error:nil];
     if (!data) return;
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    // U+2028 / U+2029 are legal in JSON but break JavaScript string literals in older WebKit.
     json = [json stringByReplacingOccurrencesOfString:@"\u2028" withString:@"\\u2028"];
     json = [json stringByReplacingOccurrencesOfString:@"\u2029" withString:@"\\u2029"];
     NSString *script = [NSString stringWithFormat:@"ChatUI.%@.apply(null,%@);", function, json];
@@ -696,8 +688,6 @@ static NSString *ClippedForLog(NSString *text) {
 
 #pragma mark - Greeting
 
-// By the device's clock: 03:00-10:59 morning, 11:00-13:59 midday, 14:00-17:59 afternoon,
-// 18:00-22:59 evening, 23:00-02:59 night owl.
 - (NSString *)greetingTitle {
     NSInteger hour = [[NSCalendar currentCalendar] component:NSCalendarUnitHour fromDate:[NSDate date]];
     if (hour >= 23 || hour < 3) return L(@"greeting_night");
@@ -718,7 +708,6 @@ static NSString *ClippedForLog(NSString *text) {
     }
 }
 
-// A new empty chat gets a different line than the previous one.
 - (void)rerollGreeting {
     NSUInteger previous = self.greetingIndex;
     NSUInteger next = previous;
@@ -726,7 +715,6 @@ static NSString *ClippedForLog(NSString *text) {
     self.greetingIndex = next;
 }
 
-// The empty chat is still showing: redraw it when the time of day (and so the greeting) has changed.
 - (void)refreshGreetingIfEmpty {
     if (!self.webReady || [self.conversation[@"messages"] count] > 0) return;
     NSString *current = [NSString stringWithFormat:@"%@|%@", [self greetingTitle], [self greetingSubtitle]];
@@ -754,7 +742,6 @@ static NSString *ClippedForLog(NSString *text) {
                                           @"thinking": ([AppSettings reasoningLevel] >= AIReasoningLevelHigh) ? @"Đang suy luận sâu…" : @"Đang xử lý…" }]];
 }
 
-// What the page needs to draw a message's attachments: kind, name, and a small thumbnail for photos.
 - (NSArray *)webAttachmentsFrom:(NSArray *)attachments conversation:(NSString *)cid {
     NSMutableArray *out = [NSMutableArray array];
     if (![attachments isKindOfClass:[NSArray class]]) return out;
@@ -866,7 +853,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self presentViewController:activity animated:YES completion:nil];
 }
 
-// Opens the stored (2048 px) photo of a message in the full-screen viewer.
 - (void)showImageForAttachmentId:(NSString *)attachmentId {
     if (![attachmentId isKindOfClass:[NSString class]] || attachmentId.length == 0) return;
     NSString *cid = self.conversation[@"id"];
@@ -907,7 +893,6 @@ static NSString *ClippedForLog(NSString *text) {
     [DiagnosticLog log:@"web view failed to start: %@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
 }
 
-// iOS may kill the web process under memory pressure (the iPhone 6 has 1 GB). Rebuild the page.
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
     [DiagnosticLog log:@"web content process was terminated by iOS (probably memory): reloading the page"];
     [self loadWebPage];
@@ -923,18 +908,16 @@ static NSString *ClippedForLog(NSString *text) {
     self.modelButton.frame = CGRectMake(0, 0, MIN(ceil(size.width) + 8, maxWidth), 44);
 }
 
-// The chosen model must belong to a provider that has a key. Otherwise pick a default from one that does.
 - (void)ensureModelMatchesKeys {
     BOOL usable = self.model.length > 0 && [KeyStore hasKeyForProvider:[Provider forModelId:self.model]];
     if (usable) return;
-    NSString *fallback = [ModelStore defaultModelIdAcrossProviders];   // nil until a model list has been fetched
+    NSString *fallback = [ModelStore defaultModelIdAcrossProviders];
     self.model = fallback;
     if (fallback.length > 0) [ModelStore setSelectedModelId:fallback];
     self.conversation[@"model"] = fallback ?: @"";
     [self updateModelTitle];
 }
 
-// Fetches the model list of every provider that has a key (in the background) and keeps the choice valid.
 - (void)refreshModels {
     for (NSNumber *value in [Provider all]) {
         AIProvider provider = (AIProvider)value.integerValue;
@@ -1002,7 +985,6 @@ static NSString *ClippedForLog(NSString *text) {
     if ([cid isEqualToString:self.conversation[@"id"]]) [self startNewChat];
 }
 
-// Files picked for a message that was never sent belong to the conversation being left behind.
 - (void)discardPendingAttachments {
     NSString *cid = self.conversation[@"id"];
     for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
@@ -1015,7 +997,7 @@ static NSString *ClippedForLog(NSString *text) {
     [self discardPendingAttachments];
     self.conversation = [ConversationStore newConversationWithModel:self.model];
     [self rerollGreeting];
-    [self pushStrings];   // a fresh greeting for the fresh chat
+    [self pushStrings];
     [self callJS:@"clear" args:@[]];
     [self updateSendButton];
 }
@@ -1221,8 +1203,8 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)imagePickerController:(UIImagePickerController *)picker
 didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
-    NSURL *imageURL = info[UIImagePickerControllerImageURL];      // photo library picks come as a file
-    UIImage *original = info[UIImagePickerControllerOriginalImage];   // camera shots come as an image in memory
+    NSURL *imageURL = info[UIImagePickerControllerImageURL];
+    UIImage *original = info[UIImagePickerControllerOriginalImage];
     [picker dismissViewControllerAnimated:YES completion:nil];
 
     [self runImportWithWork:^NSDictionary *(NSString *cid, NSString **errorKey) {
@@ -1248,7 +1230,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark Import pipeline
 
-// Decoding, resizing and unzipping happen off the main thread; the chip shows a spinner meanwhile.
 - (void)runImportWithWork:(NSDictionary *(^)(NSString *cid, NSString **errorKey))work {
     NSString *cid = self.conversation[@"id"];
     self.importsInFlight++;
@@ -1271,7 +1252,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     if (attachment) {
         if (![cid isEqualToString:self.conversation[@"id"]]) {
-            // The person switched chats while the file was being processed: it belongs to a conversation they left.
             [AttachmentStore deleteAttachment:attachment conversation:cid];
         } else if ((NSInteger)self.pendingAttachments.count >= kMaxAttachmentsPerMessage) {
             [AttachmentStore deleteAttachment:attachment conversation:cid];
@@ -1305,8 +1285,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     BOOL hasAttachments = self.pendingAttachments.count > 0;
     if ((text.length == 0 && !hasAttachments) || !self.webReady || self.importsInFlight > 0) return;
 
-    // /tạo ảnh explicitly routes to a Gemini image-generation model. Do not silently
-    // send this command to a normal text-only model and pretend an image was generated.
     NSString *lowerText = text.lowercaseString;
     if ([lowerText hasPrefix:@"/tạo ảnh"]) {
         NSString *imagePrompt = [[text substringFromIndex:([@"/tạo ảnh" length])] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -1383,10 +1361,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark - Request contents
 
-// Turns the saved messages into provider-neutral "turns" (the stream class converts them to Gemini's or Claude's JSON).
-// Attachments become parts that come before the typed text:
-//   photos, sampled video frames and PDFs -> base64 data, as long as they fit in the size budget (newest first)
-//   text/Word/PPT                      -> the extracted text
 - (void)addPartsForAttachment:(NSDictionary *)att
                  conversation:(NSString *)cid
                     inlineIds:(NSSet *)inlineIds
@@ -1440,9 +1414,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *cid = self.conversation[@"id"];
     NSArray *messages = self.conversation[@"messages"];
 
-    // Photos, video keyframes and PDFs are re-sent with each request, which costs quota. Only the newest media
-    // messages (as many as the setting allows, 0 = all) include their data, within the byte budget; older ones
-    // become a short note. Text taken from Word/PowerPoint/text files is not affected.
     NSInteger memory = [AppSettings attachmentMemory];
     NSInteger mediaMessages = 0;
     NSMutableSet *inlineIds = [NSMutableSet set];
@@ -1469,8 +1440,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Both providers expect alternating roles, so merge consecutive messages from the same side.
-    // (The history file stores the assistant as "model"; the neutral turns call it "assistant".)
     NSMutableArray *turns = [NSMutableArray array];
     for (NSDictionary *message in messages) {
         NSString *role = message[@"role"];
@@ -1492,8 +1461,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Respect both the user's chosen history size and the selected model's published input limit.
-    // The conversion is deliberately conservative because characters are only an estimate of tokens.
     NSUInteger contextLimit = [AppSettings contextLimitChars];
     AIProvider provider = [Provider forModelId:self.model];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
@@ -1503,16 +1470,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         modelCharCap = modelCharCap > reservedChars ? modelCharCap - reservedChars : 4096;
         contextLimit = MIN(contextLimit, modelCharCap);
     } else {
-        // The cached model list may predate token metadata. Limit history until the user refreshes that list.
         contextLimit = MIN(contextLimit, (NSUInteger)32000);
     }
 
-    // Drop the oldest turns first, and never start with an assistant turn.
     while (turns.count > 1 && [self totalTextChars:turns] > contextLimit) [turns removeObjectAtIndex:0];
     while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
 
-    // A single very long newest turn cannot be dropped wholesale. Trim its oldest text while preserving the tail
-    // (which normally contains the current question) so the request still fits the selected model's estimate.
     if (turns.count == 1 && [self totalTextChars:turns] > contextLimit) {
         NSMutableArray *parts = turns.firstObject[@"parts"];
         NSString *marker = @"[Earlier text omitted to fit the model context]\n";
@@ -1529,7 +1492,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                 continue;
             }
 
-            // Account for every other text part (especially the current question) before choosing the tail size.
             NSUInteger otherChars = total - content.length;
             NSUInteger available = contextLimit > otherChars + marker.length
                 ? contextLimit - otherChars - marker.length : 0;
@@ -1561,7 +1523,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark - Streaming
 
-// Explains what is missing when the chosen model's provider has no key (for example a Claude model after its key was deleted).
 - (BOOL)checkKeyForCurrentModel {
     AIProvider provider = [Provider forModelId:self.model];
     if ([KeyStore hasKeyForProvider:provider]) return YES;
@@ -1581,14 +1542,10 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self launchRequestStreaming:YES];
 }
 
-// Instructions of this conversation if it has its own, otherwise the general ones from Settings.
 - (NSString *)effectiveSystemPrompt {
     NSString *own = self.conversation[@"system"];
     NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
-    // The complete prompt (up to 1M chars) stays on-device. Only a compact, query-selected
-    // excerpt is sent per request. A hard cap keeps long custom instructions from making
-    // requests unnecessarily slow or oversized; 404 is handled separately as a model/path error.
     NSUInteger promptBudget = inputTokenCap > 0
         ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
         : 16000;
@@ -1604,7 +1561,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     return [AppSettings promptText:prompt forQuery:query characterBudget:promptBudget];
 }
 
-// Counts only: never the text itself.
 - (NSString *)summaryOfTurns:(NSArray *)turns {
     NSUInteger images = 0, pdfs = 0, mediaChars = 0, textChars = 0;
     for (NSDictionary *turn in turns) {
@@ -1649,7 +1605,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || data.length == 0) return;
         NSString *errorKey = nil;
-        NSString *imageName = @"generated-image.jpg"; // AttachmentStore normalizes all imported images to JPEG.
+        NSString *imageName = @"generated-image.jpg";
         NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
                                                          conversation:me.conversation[@"id"] errorKey:&errorKey];
         if (attachment) {
@@ -1683,8 +1639,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     AIProvider currentProvider = [Provider forModelId:self.model];
     BOOL largeClaudeReply = currentProvider == AIProviderClaude && [AppSettings maxOutputTokens] > 21333;
 
-    // A Fast-mode 429/529 can be caused by the separate premium speed pool. Retry once
-    // at standard speed before consuming the general server-retry budget.
     BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
     NSString *fastErrorText = [detail lowercaseString] ?: @"";
     BOOL fastRateLimited = wasFastRequest && (status == 429 || status == 529);
@@ -1696,7 +1650,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         NSTimeInterval fastRetryAfter = self.stream.retryAfterSeconds;
         self.stream = nil;
         if (fastRejected) {
-            // The account/model may not have Fast-mode entitlement; stop requesting it on later turns.
             [AppSettings setFastModeEnabled:NO];
             [self updateToolButtons];
         }
@@ -1710,8 +1663,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
-    // Transient provider overloads (500/502/503/504/529) are retried with exponential
-    // backoff only before any content arrives, so a partial answer is never duplicated.
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
     if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
@@ -1727,8 +1678,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
-    // A 404 often means that a cached model id was removed. Refresh once and switch
-    // only when the provider's live model list no longer contains the selected id.
     if (error == GeminiStreamErrorModelNotFound && status == 404 && partial.length == 0 && !self.didRecoverModel404) {
         self.stream = nil;
         self.didRecoverModel404 = YES;
@@ -1780,7 +1729,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
         self.stream = nil;
         if (largeClaudeReply && self.streamRetryCount < 1) {
-            // Large Claude outputs must remain streamed. Retry the stream once rather than switching to a single response.
             self.streamRetryCount++;
             [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1789,7 +1737,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             return;
         }
         if (!largeClaudeReply) {
-            // Smaller replies can fall back to a normal response if a long-lived stream fails before any text arrives.
             [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
             [self launchRequestStreaming:NO];
             return;
@@ -1827,7 +1774,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [ConversationStore saveConversation:self.conversation];
 }
 
-// Stops the current reply without touching the UI (used when switching chats); keeps what arrived so far.
 - (void)abandonStream {
     if (!self.stream) return;
     NSString *partial = [self.streamBuffer copy] ?: @"";
@@ -1851,7 +1797,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSDictionary *target = messages[(NSUInteger)index];
     if (![target[@"role"] isEqualToString:@"user"]) return;
 
-    // Remove any unsent draft attachments before restoring the selected message's attachments.
     NSString *cid = self.conversation[@"id"];
     for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
     [self.pendingAttachments removeAllObjects];
@@ -1859,7 +1804,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
     NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
 
-    // Keep attachments belonging to the edited message; delete files referenced only by later messages.
     for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
         if (i != index) {
             NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
