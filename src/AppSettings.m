@@ -247,10 +247,10 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 }
 + (NSUInteger)contextLimitChars {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
-    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
+    return (value >= 1000 && value <= 1000000) ? (NSUInteger)value : 600000;
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
+    if (count < 1000 || count > 1000000) count = 600000;
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
 }
 
