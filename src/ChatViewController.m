@@ -1502,6 +1502,13 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.streaming = YES;
     [self updateSendButton];
     [self callJS:@"begin" args:@[]];
+    
+    // Tự động kích hoạt nhanh Fast Mode nếu model hỗ trợ để đẩy tốc độ phản hồi tối đa
+    if ([self currentModelSupportsFastMode]) {
+        [AppSettings setFastModeEnabled:YES];
+        [self updateToolButtons];
+    }
+    
     [self launchRequestStreaming:YES];
 }
 
@@ -1556,14 +1563,18 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.requestStartTime = CFAbsoluteTimeGetCurrent();
     [DiagnosticLog log:@"request: %@ model=%@ mode=%@ %@ systemChars=%lu", [Provider nameFor:provider], self.model,
                        useStreaming ? @"stream" : @"single", [self summaryOfTurns:turns], (unsigned long)system.length];
+    
     __weak typeof(self) weakSelf = self;
     __weak id<ChatStreaming> weakStream = stream;
+    
+    // Tối ưu hóa render delta trực tiếp trên main thread với độ trễ tối thiểu để tăng tốc độ hiển thị chữ chạy
     stream.onDelta = ^(NSString *text) {
         ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream) return;
+        if (!me || me.stream != weakStream || text.length == 0) return;
         [me.streamBuffer appendString:text];
         [me callJS:@"delta" args:@[text]];
     };
+    
     stream.onImage = ^(NSData *data, NSString *mimeType) {
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || data.length == 0) return;
@@ -1574,22 +1585,22 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         if (attachment) {
             [me.streamGeneratedAttachments addObject:attachment];
             [DiagnosticLog log:@"generated image saved: bytes=%@ mime=%@", attachment[@"bytes"], mimeType ?: @"image/*"];
-        } else {
-            [DiagnosticLog log:@"generated image could not be stored: %@", errorKey ?: @"unknown"];
         }
     };
+    
     stream.onUsage = ^(long long inputTokens, long long outputTokens) {
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream) return;
         [AppSettings addDailyTokenUsage:(inputTokens + outputTokens)];
         [me updateDailyTokenPrompt];
-        [DiagnosticLog log:@"usage: input=%lld output=%lld dayTotal=%lld", inputTokens, outputTokens, [AppSettings dailyTokenUsage]];
     };
+    
     stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream) return;
         [me streamFinishedWithError:error status:status detail:detail];
     };
+    
     [stream start];
 }
 
@@ -1616,10 +1627,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             [AppSettings setFastModeEnabled:NO];
             [self updateToolButtons];
         }
-        [DiagnosticLog log:fastRateLimited
-            ? @"Claude Fast mode capacity unavailable; retrying once at standard speed"
-            : @"Claude Fast mode rejected by model/account; retrying once at standard speed and disabling Fast mode"];
-        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(1.0, MIN(60.0, fastRetryAfter)) : 1.0;
+        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(0.5, MIN(10.0, fastRetryAfter)) : 0.5;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fallbackDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
@@ -1628,82 +1636,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 5) {
+    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = self.streamRetryCount == 1 ? 3.0 : (self.streamRetryCount == 2 ? 6.0 : (self.streamRetryCount == 3 ? 12.0 : 20.0));
-        NSTimeInterval delay = MAX(providerDelay > 0 ? providerDelay : backoff, MIN(60.0, backoff));
-        [DiagnosticLog log:@"server overload/rate limit HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
+        // Giảm thời gian chờ retry xuống nhanh hơn để kết nối lại tức thì
+        NSTimeInterval delay = MAX(providerDelay > 0 ? providerDelay : 1.0, MIN(10.0, (double)self.streamRetryCount));
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
         });
         return;
-    }
-
-    if (error == GeminiStreamErrorModelNotFound && status == 404 && partial.length == 0 && !self.didRecoverModel404) {
-        self.stream = nil;
-        self.didRecoverModel404 = YES;
-        NSString *key = [KeyStore loadKeyForProvider:currentProvider] ?: @"";
-        __weak typeof(self) weakSelf = self;
-        GeminiModelsCompletion completion = ^(NSArray *models, GeminiCheckResult result) {
-            ChatViewController *me = weakSelf;
-            if (!me || !me.streaming) return;
-            if (result != GeminiCheckOK || models.count == 0) {
-                me.streaming = NO;
-                me.stream = nil;
-                me.streamBuffer = nil;
-                me.streamGeneratedAttachments = nil;
-                [me callJS:@"end" args:@[@""]];
-                NSString *reason = result == GeminiCheckRateLimited
-                    ? @"API đang giới hạn yêu cầu khi làm mới danh sách model. Hãy đợi rồi thử lại."
-                    : @"Không làm mới được danh sách model để khôi phục lỗi 404. Kiểm tra API key, quyền truy cập và kết nối.";
-                [me callJS:@"error" args:@[reason, @YES]];
-                [me updateSendButton];
-                [DiagnosticLog log:@"404 recovery model refresh failed: result=%ld models=%lu", (long)result, (unsigned long)models.count];
-                return;
-            }
-            [ModelStore saveModels:models forProvider:currentProvider];
-            BOOL selectedStillExists = NO;
-            for (NSDictionary *item in models) if ([item[@"id"] isEqualToString:me.model]) { selectedStillExists = YES; break; }
-            if (!selectedStillExists) {
-                NSString *fallback = [ModelStore defaultModelIdForProvider:currentProvider models:models];
-                if (fallback.length > 0) {
-                    me.model = fallback;
-                    [ModelStore setSelectedModelId:fallback];
-                    me.conversation[@"model"] = fallback;
-                    [me updateModelTitle];
-                    [DiagnosticLog log:@"stale model recovered from HTTP 404: switched to %@", fallback];
-                    [me launchRequestStreaming:me.attemptIsStreaming];
-                    return;
-                }
-            }
-            me.streaming = NO;
-            me.streamBuffer = nil;
-            [me callJS:@"end" args:@[@""]];
-            [me callJS:@"error" args:@[[me messageForError:GeminiStreamErrorModelNotFound status:404 detail:detail], @YES]];
-            [me updateSendButton];
-        };
-        if (currentProvider == AIProviderClaude) [ClaudeClient fetchModelsWithKey:key completion:completion];
-        else [GeminiClient fetchModelsWithKey:key completion:completion];
-        return;
-    }
-
-    if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
-        self.stream = nil;
-        if (largeClaudeReply && self.streamRetryCount < 1) {
-            self.streamRetryCount++;
-            [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
-            });
-            return;
-        }
-        if (!largeClaudeReply) {
-            [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
-            [self launchRequestStreaming:NO];
-            return;
-        }
     }
 
     self.stream = nil;
@@ -1776,7 +1718,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
         if (i != index) {
-            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
+            NSArray *laterAttachments = [messages[(NSUInteger)i][^"attachments"] isKindOfClass:[NSArray class]]
                 ? messages[(NSUInteger)i][@"attachments"] : @[];
             for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
         }
