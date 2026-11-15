@@ -82,7 +82,7 @@
 "system_prompt_title" = "Chỉ dẫn cho AI";
 "system_prompt_set" = "Đã đặt";
 "system_prompt_unset" = "Chưa đặt";
-"system_prompt_hint" = "Nội dung này được gửi kèm mọi tin nhắn để định hướng cách AI trả lời. Tối đa 1.000.000 ký tự; độ dài lớn có thể chiếm nhiều context hơn.";
+"system_prompt_hint" = "Tối đa 1.000.000 ký tự. Toàn bộ chỉ dẫn được lưu trên máy; mỗi lượt chat chỉ gửi các đoạn liên quan phù hợp giới hạn của model để giảm độ trễ và tránh yêu cầu quá lớn.";
 "system_prompt_placeholder" = "Ví dụ: Hãy giải thích từng bước bằng ví dụ đơn giản và trả lời bằng tiếng Việt.";
 "done" = "Xong";
 "language" = "Ngôn ngữ";
@@ -95,7 +95,7 @@
 "err_no_key_for_provider" = "Chưa có API key %@. Hãy thêm key trong Lịch sử › Cài đặt, hoặc chọn model khác.";
 "reply_truncated" = "*(Câu trả lời bị cắt vì đạt giới hạn độ dài.)*";
 "chat_prompt_title" = "Chỉ dẫn cho cuộc trò chuyện này";
-"chat_prompt_hint" = "Chỉ dẫn này chỉ dùng cho cuộc trò chuyện hiện tại và thay cho chỉ dẫn chung trong Cài đặt. Tối đa 1.000.000 ký tự. Để trống để dùng chỉ dẫn chung.";
+"chat_prompt_hint" = "Chỉ dẫn này chỉ dùng cho cuộc trò chuyện hiện tại và thay cho chỉ dẫn chung trong Cài đặt. Tối đa 1.000.000 ký tự. Toàn bộ được lưu trên máy; mỗi yêu cầu chỉ gửi phần liên quan phù hợp giới hạn model. Để trống để dùng chỉ dẫn chung.";
 "chat_prompt_default" = "Dùng chỉ dẫn chung";
 "attach_memory_title" = "Ảnh, PDF và video đã gửi";
 "attach_memory_1" = "Chỉ tin nhắn mới nhất";
