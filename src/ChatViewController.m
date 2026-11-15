@@ -582,22 +582,21 @@ static NSString *ClippedForLog(NSString *text) {
     long long used = [AppSettings dailyTokenUsage];
     long long budget = [AppSettings dailyTokenBudget];
     
-    NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
-    formatter.numberStyle = NSNumberFormatterDecimalStyle;
-    
     NSString *usedText = nil;
     NSString *budgetText = nil;
     
     if (used >= 1000000000LL) {
-        usedText = [NSString stringWithFormat:@"%.2fB", used / 1000000000.0];
+        usedText = [NSString stringWithFormat:@"%.1fB", used / 1000000000.0];
+    } else if (used >= 1000000LL) {
+        usedText = [NSString stringWithFormat:@"%.1fM", used / 1000000.0];
     } else {
-        usedText = [formatter stringFromNumber:@(used)] ?: [NSString stringWithFormat:@"%lld", used];
+        usedText = [NSString stringWithFormat:@"%lld", used];
     }
     
     if (budget >= 1000000000LL) {
         budgetText = [NSString stringWithFormat:@"%.0fB", budget / 1000000000.0];
     } else {
-        budgetText = [formatter stringFromNumber:@(budget)] ?: [NSString stringWithFormat:@"%lld", budget];
+        budgetText = [NSString stringWithFormat:@"%lld", budget];
     }
     
     self.navigationItem.prompt = [NSString stringWithFormat:@"Token hôm nay: %@/%@", usedText, budgetText];
@@ -1461,52 +1460,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    NSUInteger contextLimit = [AppSettings contextLimitChars];
-    AIProvider provider = [Provider forModelId:self.model];
-    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
-    if (inputTokenCap > 0) {
-        NSUInteger modelCharCap = (NSUInteger)inputTokenCap * 2;
-        NSUInteger reservedChars = [self effectiveSystemPrompt].length + 4096;
-        modelCharCap = modelCharCap > reservedChars ? modelCharCap - reservedChars : 4096;
-        contextLimit = MIN(contextLimit, modelCharCap);
-    } else {
-        contextLimit = MIN(contextLimit, (NSUInteger)32000);
-    }
-
-    while (turns.count > 1 && [self totalTextChars:turns] > contextLimit) [turns removeObjectAtIndex:0];
-    while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
-
-    if (turns.count == 1 && [self totalTextChars:turns] > contextLimit) {
-        NSMutableArray *parts = turns.firstObject[@"parts"];
-        NSString *marker = @"[Earlier text omitted to fit the model context]\n";
-        for (NSInteger i = 0; i < (NSInteger)parts.count && [self totalTextChars:turns] > contextLimit; i++) {
-            NSMutableDictionary *part = parts[(NSUInteger)i];
-            NSString *content = [part[@"text"] isKindOfClass:[NSString class]] ? part[@"text"] : nil;
-            if (content.length == 0) continue;
-
-            NSUInteger total = [self totalTextChars:turns];
-            NSUInteger excess = total - contextLimit;
-            if (content.length <= excess) {
-                [parts removeObjectAtIndex:(NSUInteger)i];
-                i--;
-                continue;
-            }
-
-            NSUInteger otherChars = total - content.length;
-            NSUInteger available = contextLimit > otherChars + marker.length
-                ? contextLimit - otherChars - marker.length : 0;
-            NSUInteger keep = MIN(available, content.length - excess);
-            if (keep > 0) {
-                NSUInteger start = content.length - keep;
-                NSRange safe = [content rangeOfComposedCharacterSequencesForRange:NSMakeRange(start, keep)];
-                part[@"text"] = [marker stringByAppendingString:[content substringWithRange:safe]];
-                break;
-            }
-
-            [parts removeObjectAtIndex:(NSUInteger)i];
-            i--;
-        }
-    }
+    // Nới lỏng hoàn toàn giới hạn lịch sử, lấy toàn bộ lịch sử trò chuyện (vô thời hạn theo server API)
     return turns;
 }
 
@@ -1663,15 +1617,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
+    // Xử lý lỗi 429 (Rate Limit) và quá tải server với cơ chế thử lại tự động tăng dần thời gian chờ (Exponential Backoff)
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
+    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 5) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0);
-        NSTimeInterval delay = MAX(backoff, MIN(60.0, providerDelay));
-        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
+        NSTimeInterval backoff = self.streamRetryCount == 1 ? 3.0 : (self.streamRetryCount == 2 ? 6.0 : (self.streamRetryCount == 3 ? 12.0 : 20.0));
+        NSTimeInterval delay = MAX(providerDelay > 0 ? providerDelay : backoff, MIN(60.0, backoff));
+        [DiagnosticLog log:@"server overload/rate limit HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
         });
