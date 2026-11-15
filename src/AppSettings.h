@@ -10,28 +10,31 @@ typedef NS_ENUM(NSInteger, AIReasoningLevel) {
     AIReasoningLevelMax
 };
 
-// Small app-wide preferences.
 @interface AppSettings : NSObject
 
-+ (NSString *)systemPrompt;                       // the general instructions; @"" when none is set
-+ (void)setSystemPrompt:(NSString *)prompt;       // cleaned (see cleanedPrompt:)
-+ (NSString *)cleanedPrompt:(NSString *)text;     // trimmed and cut to kMaxSystemPromptChars
++ (NSString *)systemPrompt;
++ (void)setSystemPrompt:(NSString *)prompt;
++ (NSString *)cleanedPrompt:(NSString *)text;
++ (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget;
++ (NSString *)promptText:(NSString *)prompt forQuery:(NSString *)query characterBudget:(NSUInteger)budget;
 
-// How many recent messages carrying photos/video frames/PDFs are re-sent with each request: 1, 3, or 0 for all.
-// (The model only "sees" an attachment in the request that contains it, so older ones must be re-sent to stay visible.)
-+ (NSInteger)attachmentMemory;                    // default 3
++ (NSInteger)attachmentMemory;
 + (void)setAttachmentMemory:(NSInteger)count;
-
-// Provider output budget (2,048–128,000 tokens). The actual request is clamped to each model's API-reported cap.
 + (NSInteger)maxOutputTokens;
 + (void)setMaxOutputTokens:(NSInteger)count;
-
-// Maximum text retained from the conversation when building a request (characters).
 + (NSUInteger)contextLimitChars;
 + (void)setContextLimitChars:(NSUInteger)count;
 
-// Requested reasoning intensity. Providers/models may support only a subset.
 + (AIReasoningLevel)reasoningLevel;
 + (void)setReasoningLevel:(AIReasoningLevel)level;
++ (BOOL)fastModeEnabled;
++ (void)setFastModeEnabled:(BOOL)enabled;
++ (BOOL)webSearchEnabled;
++ (void)setWebSearchEnabled:(BOOL)enabled;
+
++ (long long)dailyTokenUsage;
++ (void)addDailyTokenUsage:(long long)count;
++ (long long)dailyTokenBudget;
++ (void)setDailyTokenBudget:(long long)count;
 
 @end
