@@ -185,39 +185,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
 }
 
-
-- (NSString *)reasoningLevelName {
-    switch ([AppSettings reasoningLevel]) {
-        case AIReasoningLevelLow: return @"Thấp";
-        case AIReasoningLevelMedium: return @"Trung bình";
-        case AIReasoningLevelHigh: return @"Cao";
-        case AIReasoningLevelVeryHigh: return @"Siêu cao";
-        case AIReasoningLevelMax: return @"MAX ×8 (nếu model hỗ trợ)";
-    }
-    return @"Trung bình";
-}
-
-- (void)chooseReasoningLevel {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Mức suy luận AI"
-                                                                   message:@"Mức thực tế phụ thuộc model và API. MAX ×8 không thể vượt giới hạn nhà cung cấp."
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8 (nếu model hỗ trợ)"];
-    __weak typeof(self) weakSelf = self;
-    [names enumerateObjectsUsingBlock:^(NSString *name, NSUInteger idx, BOOL *stop) {
-        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [AppSettings setReasoningLevel:(AIReasoningLevel)idx];
-            [weakSelf.tableView reloadData];
-        }]];
-    }];
-    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
-    NSIndexPath *path = [NSIndexPath indexPathForRow:4 inSection:SettingsSectionAssistant];
-    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
-    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
-    [self presentViewController:sheet animated:YES completion:nil];
-}
-
 - (NSString *)contextMemoryName {
-    return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
+    // Hiển thị trạng thái Vô thời hạn cho lịch sử AI theo yêu cầu mới
+    return @"Vô thời hạn (Tùy server API)";
 }
 
 - (void)chooseOutputTokens {
@@ -242,19 +212,13 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (void)chooseContextMemory {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
-                                                                   message:L(@"context_memory_note")
+                                                                   message:@"Lịch sử trò chuyện gửi cho AI đã được thiết lập vô thời hạn, tự động mở rộng theo khả năng đáp ứng của server API."
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
-                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
-                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
     __weak typeof(self) weakSelf = self;
-    for (NSArray *option in options) {
-        NSUInteger value = [option[0] unsignedIntegerValue];
-        [sheet addAction:[UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [AppSettings setContextLimitChars:value];
-            [weakSelf.tableView reloadData];
-        }]];
-    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Đã hiểu (Vô thời hạn)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [AppSettings setContextLimitChars:200000000];
+        [weakSelf.tableView reloadData];
+    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
     NSIndexPath *path = [NSIndexPath indexPathForRow:3 inSection:SettingsSectionAssistant];
     sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
@@ -294,7 +258,6 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         UIAlertAction *action = [UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
             if ([[Loc preference] isEqualToString:value]) return;
             [Loc setPreference:value];
-            // The app rebuilds its screens in the new language (the open chat starts fresh).
             [[NSNotificationCenter defaultCenter] postNotificationName:kNotifLanguageChanged object:nil];
         }];
         [sheet addAction:action];
