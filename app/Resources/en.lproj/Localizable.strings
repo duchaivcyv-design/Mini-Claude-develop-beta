@@ -82,7 +82,7 @@
 "system_prompt_title" = "Instructions for the AI";
 "system_prompt_set" = "Set";
 "system_prompt_unset" = "Not set";
-"system_prompt_hint" = "This text is sent with every message to guide how the AI answers. Up to 1,000,000 characters; long instructions use more context.";
+"system_prompt_hint" = "Up to 1,000,000 characters. The complete instructions stay saved on this device; each request sends relevant excerpts within the model context limit to reduce latency and oversized requests.";
 "system_prompt_placeholder" = "Example: Explain step by step with simple examples and answer in English.";
 "done" = "Done";
 "language" = "Language";
