@@ -186,7 +186,7 @@ didReceiveResponse:(NSURLResponse *)response
                 NSDate *retryDate = [formatter dateFromString:[rawValue description]];
                 if (retryDate) delay = [retryDate timeIntervalSinceNow];
             }
-            self.retryAfterSeconds = MIN(60.0, MAX(0.0, delay));
+            self.retryAfterSeconds = MIN(900.0, MAX(0.0, delay));
             break;
         }
     }
@@ -218,7 +218,9 @@ didReceiveResponse:(NSURLResponse *)response
     } else if (self.status != 200) {
         NSString *type = nil, *message = nil;
         [self readErrorBody:self.errorBody type:&type message:&message];
-        detail = message;
+        detail = (type.length && message.length)
+            ? [NSString stringWithFormat:@"%@ | %@", type, message]
+            : (message.length ? message : type);
         result = [ClaudeStream errorForStatus:self.status type:type message:message];
     } else {
         if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
