@@ -13,6 +13,10 @@ static NSString *const kDailyUsageKey = @"dailyTokenUsage";
 static NSString *const kDailyDateKey = @"dailyTokenUsageDate";
 static NSString *const kDailyBudgetKey = @"dailyTokenBudget";
 
+// Khóa lưu trữ thống kê tuần (Thứ Hai đến Chủ Nhật)
+static NSString *const kWeeklyUsageKey = @"weeklyTokenUsage";
+static NSString *const kWeeklyWeekKey = @"weeklyTokenUsageWeek";
+
 static NSString *gPromptTextCache = nil;
 static BOOL gPromptTextCacheLoaded = NO;
 static NSString *gPromptChunkSource = nil;
@@ -36,6 +40,14 @@ static NSString *TodayKey(void) {
     formatter.timeZone = [NSTimeZone localTimeZone];
     formatter.dateFormat = @"yyyy-MM-dd";
     return [formatter stringFromDate:[NSDate date]];
+}
+
+// Hàm lấy định danh tuần (Năm - Số tuần, tính từ Thứ Hai)
+static NSString *CurrentWeekKey(void) {
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    calendar.firstWeekday = 2; // Thứ Hai là ngày đầu tuần
+    NSDateComponents *comps = [calendar components:NSCalendarUnitYearForWeekOfYear | NSCalendarUnitWeekOfYear fromDate:[NSDate date]];
+    return [NSString stringWithFormat:@"%ld-W%ld", (long)comps.yearForWeekOfYear, (long)comps.weekOfYear];
 }
 
 static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
@@ -231,10 +243,8 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
 
-// Cập nhật giới hạn câu trả lời mặc định thành 24B (hoặc mức token tối đa mở rộng)
 + (NSInteger)maxOutputTokens {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
-    // Nếu chưa lưu hoặc có giá trị cũ, mặc định là mức cao tương đương 24B hoặc 128000
     return (value > 0) ? value : 128000;
 }
 + (void)setMaxOutputTokens:(NSInteger)count {
@@ -242,13 +252,10 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
 }
 
-// Nới lỏng độ dài lịch sử gửi cho AI thành vô thời hạn (vô hạn, phụ thuộc server API)
 + (NSUInteger)contextLimitChars {
-    // Trả về mức cực lớn để không bị giới hạn cứng ở client (vô thời hạn theo khả năng server API)
     return (NSUInteger)200000000; 
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    // Luôn giữ ở mức không giới hạn hoặc ghi nhận theo ý muốn
     [[NSUserDefaults standardUserDefaults] setInteger:200000000 forKey:kContextLimitCharsKey];
 }
 
@@ -265,6 +272,8 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 + (BOOL)webSearchEnabled { return [[NSUserDefaults standardUserDefaults] boolForKey:kWebSearchKey]; }
 + (void)setWebSearchEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWebSearchKey]; }
 
+#pragma mark - Token Tracking (Hạn mức ngày 24B & Tuần 1T)
+
 + (long long)dailyTokenUsage {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *today = TodayKey();
@@ -279,27 +288,60 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     return usageObject ? [usageObject longLongValue] : 0;
 }
 
++ (long long)weeklyTokenUsage {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *currentWeek = CurrentWeekKey();
+
+    if (![[defaults stringForKey:kWeeklyWeekKey] isEqualToString:currentWeek]) {
+        [defaults setObject:currentWeek forKey:kWeeklyWeekKey];
+        [defaults setObject:@0 forKey:kWeeklyUsageKey];
+        return 0;
+    }
+
+    id usageObject = [defaults objectForKey:kWeeklyUsageKey];
+    return usageObject ? [usageObject longLongValue] : 0;
+}
+
 + (void)addDailyTokenUsage:(long long)count {
     if (count <= 0) return;
 
-    long long current = [self dailyTokenUsage];
+    // Cập nhật ngày
+    long long dailyCurrent = [self dailyTokenUsage];
+    if (LLONG_MAX - dailyCurrent < count) dailyCurrent = LLONG_MAX;
+    else dailyCurrent += count;
+    [[NSUserDefaults standardUserDefaults] setObject:@(dailyCurrent) forKey:kDailyUsageKey];
 
-    if (LLONG_MAX - current < count)
-        current = LLONG_MAX;
-    else
-        current += count;
-
-    [[NSUserDefaults standardUserDefaults] setObject:@(current) forKey:kDailyUsageKey];
+    // Cập nhật tuần (Thứ 2 - Chủ Nhật)
+    long long weeklyCurrent = [self weeklyTokenUsage];
+    if (LLONG_MAX - weeklyCurrent < count) weeklyCurrent = LLONG_MAX;
+    else weeklyCurrent += count;
+    [[NSUserDefaults standardUserDefaults] setObject:@(weeklyCurrent) forKey:kWeeklyUsageKey];
 }
 
-// Cố định định mức ngân sách token là 24B để hiển thị động (Ví dụ: 0/24B, 21B/24B)
 + (long long)dailyTokenBudget {
-    return 24000000000LL; // 24B chuẩn cố định
+    return 24000000000LL; // 24B
 }
 
 + (void)setDailyTokenBudget:(long long)count {
-    // Luôn duy trì mức 24B theo yêu cầu
     [[NSUserDefaults standardUserDefaults] setObject:@(24000000000LL) forKey:kDailyBudgetKey];
+}
+
+// Ngân sách tuần cố định: 1T (1 Trillion tokens)
++ (long long)weeklyTokenBudget {
+    return 1000000000000LL; // 1T tokens
+}
+
+// Kiểm tra xem tuần này đã dùng hết 1T chưa
++ (BOOL)isWeeklyBudgetExhausted {
+    return [self weeklyTokenUsage] >= [self weeklyTokenBudget];
+}
+
+// Tính phần trăm sử dụng tuần theo 1T
++ (CGFloat)weeklyUsagePercentage {
+    long long used = [self weeklyTokenUsage];
+    long long budget = [self weeklyTokenBudget];
+    if (budget <= 0) return 0.0f;
+    return ((CGFloat)used / (CGFloat)budget) * 100.0f;
 }
 
 @end
