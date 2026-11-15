@@ -130,3 +130,11 @@
 "save_reply" = "Lưu câu trả lời";
 "att_err_video" = "Không đọc được video. Hỗ trợ video MOV/MP4 tối đa 120 giây; app gửi các khung hình đại diện, không gửi âm thanh.";
 "share_image" = "Chia sẻ ảnh";
+
+/* Thêm các khóa cho Thống kê Token */
+"token_usage_daily" = "Token hôm nay (Ngày)";
+"token_usage_weekly" = "Token tuần này (Thứ 2 - CN)";
+"token_daily_limit" = "Hạn mức ngày: 24B (Reset mỗi ngày)";
+"token_weekly_limit" = "Hạn mức tuần: 1 Trillion tính từ Thứ Hai đến Chủ Nhật";
+"token_section_title" = "THỐNG KÊ TOKEN SỬ DỤNG";
+"token_section_footer" = "Hạn mức ngày: 24B (Reset mỗi ngày). Hạn mức tuần: 1T tính từ Thứ Hai đến Chủ Nhật.";
