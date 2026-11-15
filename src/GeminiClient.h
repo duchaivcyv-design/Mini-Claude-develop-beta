@@ -18,7 +18,7 @@ typedef void (^GeminiModelsCompletion)(NSArray *models, GeminiCheckResult result
 + (void)verifyKey:(NSString *)key completion:(GeminiVerifyCompletion)completion;
 
 // Fetches the chat-capable Gemini models available to this key, as @[ @{ @"id": ..., @"name": ... } ],
-// newest first. Image/audio/live/embedding variants are filtered out. Completion runs on the main queue.
+// newest first. Audio/live/embedding variants are filtered out; image-generation chat models remain selectable. Completion runs on the main queue.
 + (void)fetchModelsWithKey:(NSString *)key completion:(GeminiModelsCompletion)completion;
 
 @end
