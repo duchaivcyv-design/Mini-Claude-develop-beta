@@ -67,7 +67,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == SettingsSectionKeys || section == SettingsSectionAbout) return 2;
-    if (section == SettingsSectionAssistant) return 3;
+    if (section == SettingsSectionAssistant) return 4;
     return 1;
 }
 
@@ -105,6 +105,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             } else if (indexPath.row == 1) {
                 cell.textLabel.text = L(@"attach_memory_title");
                 cell.detailTextLabel.text = [self attachmentMemoryName];
+            } else if (indexPath.row == 2) {
+                cell.textLabel.text = L(@"output_tokens_title");
+                cell.detailTextLabel.text = [self outputTokensName];
             } else {
                 cell.textLabel.text = L(@"context_memory_title");
                 cell.detailTextLabel.text = [self contextMemoryName];
@@ -151,6 +154,8 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
                 [self.navigationController pushViewController:[[SystemPromptViewController alloc] init] animated:YES];
             } else if (indexPath.row == 1) {
                 [self chooseAttachmentMemory];
+            } else if (indexPath.row == 2) {
+                [self chooseOutputTokens];
             } else {
                 [self chooseContextMemory];
             }
@@ -176,23 +181,72 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     return L(@"attach_memory_3");
 }
 
+- (NSString *)outputTokensName {
+    return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
+}
+
+
+- (NSString *)reasoningLevelName {
+    switch ([AppSettings reasoningLevel]) {
+        case AIReasoningLevelLow: return @"Thấp";
+        case AIReasoningLevelMedium: return @"Trung bình";
+        case AIReasoningLevelHigh: return @"Cao";
+        case AIReasoningLevelVeryHigh: return @"Siêu cao";
+        case AIReasoningLevelMax: return @"MAX ×8 (nếu model hỗ trợ)";
+    }
+    return @"Trung bình";
+}
+
+- (void)chooseReasoningLevel {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Mức suy luận AI"
+                                                                   message:@"Mức thực tế phụ thuộc model và API. MAX ×8 không thể vượt giới hạn nhà cung cấp."
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *names = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8 (nếu model hỗ trợ)"];
+    __weak typeof(self) weakSelf = self;
+    [names enumerateObjectsUsingBlock:^(NSString *name, NSUInteger idx, BOOL *stop) {
+        [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setReasoningLevel:(AIReasoningLevel)idx];
+            [weakSelf.tableView reloadData];
+        }]];
+    }];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:4 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
 - (NSString *)contextMemoryName {
     return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
+}
+
+- (void)chooseOutputTokens {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"output_tokens_title")
+                                                                   message:L(@"output_tokens_note")
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *options = @[ @[@2048, @"2,048 tokens"], @[@4096, @"4,096 tokens"], @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"], @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
+    __weak typeof(self) weakSelf = self;
+    for (NSArray *option in options) {
+        NSInteger value = [option[0] integerValue];
+        [sheet addAction:[UIAlertAction actionWithTitle:option[1] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [AppSettings setMaxOutputTokens:value];
+            [weakSelf.tableView reloadData];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:SettingsSectionAssistant];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)chooseContextMemory {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
                                                                    message:L(@"context_memory_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@1000, @"1 nghìn ký tự"],
-                          @[@10000, @"10 nghìn ký tự"],
-                          @[@50000, @"50 nghìn ký tự"],
-                          @[@100000, @"100 nghìn ký tự"],
-                          @[@200000, @"200 nghìn ký tự"],
-                          @[@400000, @"400 nghìn ký tự"],
-                          @[@600000, @"600 nghìn ký tự"],
-                          @[@800000, @"800 nghìn ký tự"],
-                          @[@1000000, @"1 triệu ký tự"] ];
+    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
+                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
+                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
     __weak typeof(self) weakSelf = self;
     for (NSArray *option in options) {
         NSUInteger value = [option[0] unsignedIntegerValue];
@@ -202,7 +256,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         }]];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
-    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:SettingsSectionAssistant];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:3 inSection:SettingsSectionAssistant];
     sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
     sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
     [self presentViewController:sheet animated:YES completion:nil];
