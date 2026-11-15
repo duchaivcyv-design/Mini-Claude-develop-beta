@@ -16,7 +16,6 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 @property (strong, nonatomic) NSMutableData *buffer;       // unfinished SSE bytes (or the whole body in single-request mode)
 @property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
 @property (assign, nonatomic) NSInteger status;
-@property (assign, nonatomic) NSTimeInterval retryAfterSeconds;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
