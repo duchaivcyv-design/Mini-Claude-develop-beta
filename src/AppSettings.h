@@ -6,9 +6,13 @@ typedef NS_ENUM(NSInteger, AIReasoningLevel) {
     AIReasoningLevelLow = 0,
     AIReasoningLevelMedium,
     AIReasoningLevelHigh,
+    AIReasoningLevelVeryHigh,
     AIReasoningLevelUltra,
     AIReasoningLevelMax
 };
+
+// Khai báo hằng số giới hạn ký tự system prompt mà các file khác đang sử dụng
+FOUNDATION_EXPORT const NSUInteger kMaxSystemPromptChars;
 
 @interface AppSettings : NSObject
 
@@ -42,7 +46,7 @@ typedef NS_ENUM(NSInteger, AIReasoningLevel) {
 + (long long)dailyTokenBudget;
 + (void)setDailyTokenBudget:(long long)count;
 
-// Khai báo quản lý hạn mức tuần (1T)
+// Quản lý hạn mức tuần (1T)
 + (long long)weeklyTokenUsage;
 + (long long)weeklyTokenBudget;
 + (BOOL)isWeeklyBudgetExhausted;
@@ -51,4 +55,5 @@ typedef NS_ENUM(NSInteger, AIReasoningLevel) {
 @end
 
 NS_ASSUME_NONNULL_END
+
 
