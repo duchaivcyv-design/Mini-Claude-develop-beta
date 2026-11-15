@@ -1486,6 +1486,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark - Streaming
 
+// Explains what is missing when the chosen model's provider has no key (for example a Claude model after its key was deleted).
 - (BOOL)checkKeyForCurrentModel {
     AIProvider provider = [Provider forModelId:self.model];
     if ([KeyStore hasKeyForProvider:provider]) return YES;
@@ -1496,40 +1497,20 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 - (void)startStreamingReply {
     if (![self checkKeyForCurrentModel]) return;
     self.streamBuffer = [NSMutableString string];
-    self.streamRetryCount = 0;
-    self.didRecoverModel404 = NO;
-    self.didFallbackFromFastMode = NO;
     self.streaming = YES;
     [self updateSendButton];
     [self callJS:@"begin" args:@[]];
-    
-    if ([self currentModelSupportsFastMode]) {
-        [AppSettings setFastModeEnabled:YES];
-        [self updateToolButtons];
-    }
-    
     [self launchRequestStreaming:YES];
 }
 
+// Instructions of this conversation if it has its own, otherwise the general ones from Settings.
 - (NSString *)effectiveSystemPrompt {
     NSString *own = self.conversation[@"system"];
-    NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
-    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
-    NSUInteger promptBudget = inputTokenCap > 0
-        ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
-        : 16000;
-    NSString *query = @"";
-    NSArray *messages = self.conversation[@"messages"];
-    for (NSInteger i = (NSInteger)messages.count - 1; i >= 0; i--) {
-        NSDictionary *message = messages[(NSUInteger)i];
-        if ([message[@"role"] isEqualToString:@"user"] && [message[@"text"] isKindOfClass:[NSString class]]) {
-            query = message[@"text"];
-            break;
-        }
-    }
-    return [AppSettings promptText:prompt forQuery:query characterBudget:promptBudget];
+    if ([own isKindOfClass:[NSString class]] && own.length > 0) return own;
+    return [AppSettings systemPrompt];
 }
 
+// Counts only: never the text itself.
 - (NSString *)summaryOfTurns:(NSArray *)turns {
     NSUInteger images = 0, pdfs = 0, mediaChars = 0, textChars = 0;
     for (NSDictionary *turn in turns) {
@@ -1553,12 +1534,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     id<ChatStreaming> stream = (provider == AIProviderClaude)
         ? (id<ChatStreaming>)[[ClaudeStream alloc] initWithKey:key model:self.model turns:turns system:system]
         : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:self.model turns:turns system:system];
-    if (provider == AIProviderClaude) {
-        ((ClaudeStream *)stream).useFastSpeed = [AppSettings fastModeEnabled] && !self.didFallbackFromFastMode;
-    }
     stream.useStreaming = useStreaming;
     self.stream = stream;
-    if (!self.streamGeneratedAttachments) self.streamGeneratedAttachments = [NSMutableArray array];
     self.requestStartTime = CFAbsoluteTimeGetCurrent();
     [DiagnosticLog log:@"request: %@ model=%@ mode=%@ %@ systemChars=%lu", [Provider nameFor:provider], self.model,
                        useStreaming ? @"stream" : @"single", [self summaryOfTurns:turns], (unsigned long)system.length];
@@ -1566,7 +1543,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     __weak typeof(self) weakSelf = self;
     __weak id<ChatStreaming> weakStream = stream;
     
-    // Khởi tạo bộ đếm thời gian chống kẹt (Timeout 30 giây)
+    // Bảo vệ chống kẹt trạng thái: Tự động ngắt và báo lỗi nếu sau 30 giây không nhận được dữ liệu stream
     __block BOOL hasFinished = NO;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         ChatViewController *me = weakSelf;
@@ -1576,32 +1553,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             [me streamFinishedWithError:GeminiStreamErrorNetwork status:408 detail:@"Yêu cầu quá thời gian chờ (Timeout)."];
         }
     });
-    
+
     stream.onDelta = ^(NSString *text) {
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || text.length == 0) return;
         [me.streamBuffer appendString:text];
         [me callJS:@"delta" args:@[text]];
-    };
-    
-    stream.onImage = ^(NSData *data, NSString *mimeType) {
-        ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream || data.length == 0) return;
-        NSString *errorKey = nil;
-        NSString *imageName = @"generated-image.jpg";
-        NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
-                                                         conversation:me.conversation[@"id"] errorKey:&errorKey];
-        if (attachment) {
-            [me.streamGeneratedAttachments addObject:attachment];
-            [DiagnosticLog log:@"generated image saved: bytes=%@ mime=%@", attachment[@"bytes"], mimeType ?: @"image/*"];
-        }
-    };
-    
-    stream.onUsage = ^(long long inputTokens, long long outputTokens) {
-        ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream) return;
-        [AppSettings addDailyTokenUsage:(inputTokens + outputTokens)];
-        [me updateDailyTokenPrompt];
     };
     
     stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
@@ -1620,39 +1577,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        self.attemptIsStreaming ? @"stream" : @"single", StreamErrorName(error), (long)status,
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
-    AIProvider currentProvider = [Provider forModelId:self.model];
-
-    BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
-    NSString *fastErrorText = [detail lowercaseString] ?: @"";
-    BOOL fastRateLimited = wasFastRequest && (status == 429 || status == 529);
-    BOOL fastRejected = wasFastRequest && (status == 400 || status == 403) &&
-                        ([fastErrorText containsString:@"fast"] || [fastErrorText containsString:@"speed"]);
-    if ((fastRateLimited || fastRejected) && partial.length == 0 &&
-        self.streamGeneratedAttachments.count == 0 && !self.didFallbackFromFastMode) {
-        self.didFallbackFromFastMode = YES;
-        NSTimeInterval fastRetryAfter = self.stream.retryAfterSeconds;
+    if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.attemptIsStreaming) {
+        // The live stream failed before any text arrived (some networks stall long-lived responses).
+        // Try once more as a normal single request; the typing indicator stays on screen meanwhile.
+        [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
         self.stream = nil;
-        if (fastRejected) {
-            [AppSettings setFastModeEnabled:NO];
-            [self updateToolButtons];
-        }
-        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(0.5, MIN(10.0, fastRetryAfter)) : 0.5;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fallbackDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
-        });
-        return;
-    }
-
-    BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
-    BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
-        NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
-        self.stream = nil;
-        self.streamRetryCount++;
-        NSTimeInterval delay = MAX(providerDelay > 0 ? providerDelay : 1.0, MIN(10.0, (double)self.streamRetryCount));
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
-        });
+        [self launchRequestStreaming:NO];
         return;
     }
 
@@ -1660,16 +1590,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.streamBuffer = nil;
     self.streaming = NO;
 
-    NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
-    if (partial.length > 0 || generatedAttachments.count > 0) {
-        [self appendAssistantMessage:partial attachments:generatedAttachments];
-    }
-    self.streamGeneratedAttachments = nil;
+    if (partial.length > 0) [self appendAssistantMessage:partial];
     
-    // Luôn gọi lệnh 'end' để JavaScript thoát trạng thái "Đang xử lý..."
+    // Luôn gọi lệnh 'end' để JavaScript thoát khỏi trạng thái "Đang xử lý..."
     [self callJS:@"end" args:@[partial]];
     
-    if (generatedAttachments.count > 0) [self renderConversation];
     if (error != GeminiStreamErrorNone && error != GeminiStreamErrorCancelled) {
         [self callJS:@"error" args:@[[self messageForError:error status:status detail:detail], @YES]];
     }
@@ -1677,74 +1602,26 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 }
 
 - (void)appendAssistantMessage:(NSString *)text {
-    [self appendAssistantMessage:text attachments:@[]];
-}
-
-- (void)appendAssistantMessage:(NSString *)text attachments:(NSArray *)attachments {
-    NSMutableDictionary *message = [@{ @"role": @"model", @"text": text ?: @"",
-                                        @"ts": @([[NSDate date] timeIntervalSince1970]) } mutableCopy];
-    if (attachments.count > 0) message[@"attachments"] = attachments;
     NSMutableArray *messages = self.conversation[@"messages"];
-    [messages addObject:message];
+    [messages addObject:@{ @"role": @"model", @"text": text, @"ts": @([[NSDate date] timeIntervalSince1970]) }];
     self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
     [ConversationStore saveConversation:self.conversation];
 }
 
+// Stops the current reply without touching the UI (used when switching chats); keeps what arrived so far.
 - (void)abandonStream {
-    if (!self.stream) {
-        self.streaming = NO;
-        [self updateSendButton];
-        return;
-    }
+    if (!self.stream) return;
     NSString *partial = [self.streamBuffer copy] ?: @"";
     id<ChatStreaming> old = self.stream;
     old.onDelta = nil;
     old.onFinish = nil;
-    old.onImage = nil;
-    old.onUsage = nil;
     self.stream = nil;
     self.streamBuffer = nil;
     self.streaming = NO;
     [old cancel];
-    NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
-    if (partial.length > 0 || generatedAttachments.count > 0) [self appendAssistantMessage:partial attachments:generatedAttachments];
-    self.streamGeneratedAttachments = nil;
+    if (partial.length > 0) [self appendAssistantMessage:partial];
     [self callJS:@"end" args:@[partial]];
     [self updateSendButton];
-}
-
-- (void)editMessageAtIndex:(NSInteger)index {
-    if (self.streaming || !self.webReady) return;
-    NSMutableArray *messages = self.conversation[@"messages"];
-    if (index < 0 || index >= (NSInteger)messages.count) return;
-    NSDictionary *target = messages[(NSUInteger)index];
-    if (![target[@"role"] isEqualToString:@"user"]) return;
-
-    NSString *cid = self.conversation[@"id"];
-    for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
-    [self.pendingAttachments removeAllObjects];
-
-    NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
-    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSString class]] ? [target[@"attachments"] copy] : @[];
-
-    for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
-        if (i != index) {
-            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
-                ? messages[(NSUInteger)i][@"attachments"] : @[];
-            for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
-        }
-    }
-    [messages removeObjectsInRange:NSMakeRange((NSUInteger)index, messages.count - (NSUInteger)index)];
-    [self.pendingAttachments addObjectsFromArray:attachments];
-
-    self.conversation[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
-    [ConversationStore saveConversation:self.conversation];
-    [self renderConversation];
-    [self refreshAttachStrip];
-    self.textView.text = text;
-    [self textViewDidChange:self.textView];
-    [self updateSendButton];
-    [self.textView becomeFirstResponder];
 }
 
 - (void)regenerate {
@@ -1757,6 +1634,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self renderConversation];
     [self startStreamingReply];
 }
+
 
 #pragma mark - Error text
 
