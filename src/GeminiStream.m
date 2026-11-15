@@ -14,7 +14,6 @@
 @property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
 @property (assign, nonatomic) NSInteger status;
 @property (assign, nonatomic) BOOL cancelled;
-@synthesize retryAfterSeconds = _retryAfterSeconds;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
 @property (copy, nonatomic) NSString *blockReason;         // promptFeedback.blockReason or a blocking finishReason
@@ -25,6 +24,7 @@
 @end
 
 @implementation GeminiStream
+@synthesize retryAfterSeconds = _retryAfterSeconds;
 
 - (instancetype)initWithKey:(NSString *)key model:(NSString *)model turns:(NSArray *)turns system:(NSString *)system {
     self = [super init];
