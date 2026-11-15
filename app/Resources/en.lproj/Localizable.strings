@@ -28,7 +28,7 @@
 "err_invalid_key" = "The key is invalid or has been revoked. Go to History › Settings › API key to enter it again.";
 "err_permission" = "This key isn't allowed to use this model, or your region isn't supported. Try another model.";
 "err_model_not_found" = "This model isn't available for your key right now. Tap the model name at the top to choose another.";
-"err_rate" = "Temporary rate limit reached. Wait a few minutes and try again, or pick another model (the Flash family usually has a free tier).";
+"err_rate" = "The provider rejected this request (HTTP 429). The app's 24B counter is local only; it is not Gemini/Claude provider quota. If the detail below indicates an exhausted daily/model quota, wait for the provider reset, use another model, or enable billing. If it indicates requests-per-minute throttling, wait for the provider's retry window and try again.";
 "err_network" = "Can't reach the network. Check Wi-Fi/cellular and try again.";
 "err_blocked" = "Gemini declined to answer this request (safety filter). Try rephrasing it.";
 "err_empty_reply" = "Gemini returned no content. Please try again.";
