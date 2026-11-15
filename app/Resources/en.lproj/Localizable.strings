@@ -130,3 +130,11 @@
 "save_reply" = "Save reply";
 "att_err_video" = "Couldn't read this video. MOV/MP4 videos up to 120 seconds are supported; the app sends sampled frames, not audio.";
 "share_image" = "Share image";
+
+/* Token Usage Stats Keys Added */
+"token_usage_daily" = "Daily token usage";
+"token_usage_weekly" = "Weekly token usage (Mon - Sun)";
+"token_daily_limit" = "Daily limit: 24B (Resets daily)";
+"token_weekly_limit" = "Weekly limit: 1 Trillion (Mon - Sun)";
+"token_section_title" = "TOKEN USAGE STATISTICS";
+"token_section_footer" = "Daily limit is 24B, resets every 24h. Weekly limit is 1T from Monday to Sunday, with requests cut off when reached.";
