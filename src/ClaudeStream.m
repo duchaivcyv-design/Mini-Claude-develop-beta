@@ -16,12 +16,15 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 @property (strong, nonatomic) NSMutableData *buffer;       // unfinished SSE bytes (or the whole body in single-request mode)
 @property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
 @property (assign, nonatomic) NSInteger status;
+@property (assign, nonatomic) NSTimeInterval retryAfterSeconds;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
 @property (copy, nonatomic) NSString *stopReason;          // end_turn, max_tokens, refusal, ...
 @property (copy, nonatomic) NSString *inStreamErrorType;   // an "error" event delivered inside a 200 stream
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
+@property (assign, nonatomic) long long inputTokenUsage;
+@property (assign, nonatomic) long long outputTokenUsage;
 @end
 
 @implementation ClaudeStream
@@ -80,31 +83,59 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     NSMutableDictionary *payload = [@{ @"model": self.model ?: @"",
                                        @"max_tokens": @(maxTokens),
                                        @"messages": [ClaudeStream messagesFromTurns:self.turns] } mutableCopy];
-    // Extended thinking is sent only to Claude model families that support it.
-    NSString *lowerModel = self.model.lowercaseString;
-    BOOL supportsThinking = [lowerModel containsString:@"claude-3-7"] ||
-                            [lowerModel containsString:@"claude-sonnet-4"] ||
-                            [lowerModel containsString:@"claude-opus-4"];
-    if (supportsThinking) {
-        AIReasoningLevel level = [AppSettings reasoningLevel];
-        NSInteger requestedBudget = 4096;
-        switch (level) {
-            case AIReasoningLevelLow: requestedBudget = 1024; break;
-            case AIReasoningLevelMedium: requestedBudget = 4096; break;
-            case AIReasoningLevelHigh: requestedBudget = 8192; break;
-            case AIReasoningLevelVeryHigh: requestedBudget = 16384; break;
-            case AIReasoningLevelMax: requestedBudget = 24576; break;
-        }
-        NSInteger budget = MIN(requestedBudget, MAX(1024, maxTokens - 1024));
-        payload[@"max_tokens"] = @(MAX(maxTokens, budget + 1024));
-        payload[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": @(budget) };
-    }
     if (self.useStreaming) payload[@"stream"] = @YES;
     if (self.system.length > 0) payload[@"system"] = self.system;
+
+    NSString *lowerModel = self.model.lowercaseString;
+    // Anthropic Fast mode is a provider feature, not a reasoning-level shortcut.
+    // Only send it to model families explicitly supported by the current Messages API.
+    BOOL supportsFast = ([lowerModel containsString:@"claude-opus-5-5"] ||
+                         [lowerModel containsString:@"claude-fable-5-2"] ||
+                         [lowerModel containsString:@"claude-mythos-5-2"] ||
+                         [lowerModel isEqualToString:@"claude-opus-5"] ||
+                         [lowerModel containsString:@"claude-opus-5-"] ||
+                         [lowerModel containsString:@"claude-opus-4-8"]);
+    BOOL isOpus5Preview = [lowerModel isEqualToString:@"claude-opus-5"] ||
+                          ([lowerModel containsString:@"claude-opus-5-"] && ![lowerModel containsString:@"claude-opus-5-5"]);
+    BOOL needsFastBeta = isOpus5Preview || [lowerModel containsString:@"claude-opus-4-8"];
+    if (self.useFastSpeed && supportsFast) payload[@"speed"] = @"fast";
+    AIReasoningLevel level = [AppSettings reasoningLevel];
+    BOOL adaptiveThinking = ([lowerModel containsString:@"-4-6"] || [lowerModel containsString:@"-4-7"] ||
+                             [lowerModel containsString:@"-4-8"] || [lowerModel containsString:@"-5-"] ||
+                             [lowerModel containsString:@"-6-"]);
+    BOOL legacyThinking = ([lowerModel containsString:@"-3-7"] || [lowerModel containsString:@"-4-0"] ||
+                           [lowerModel containsString:@"-4-1"] || [lowerModel containsString:@"-4-2"] ||
+                           [lowerModel containsString:@"-4-3"] || [lowerModel containsString:@"-4-4"] ||
+                           [lowerModel containsString:@"-4-5"]);
+    if (adaptiveThinking) {
+        NSArray *efforts = @[@"low", @"medium", @"high", @"xhigh", @"max"];
+        NSString *effort = efforts[(NSUInteger)level];
+        // 4.6 supports max but model support for xhigh is model-family-specific.
+        if ([lowerModel containsString:@"-4-6"] && level == AIReasoningLevelVeryHigh) effort = @"high";
+        NSMutableDictionary *thinking = [@{ @"type": @"adaptive" } mutableCopy];
+        // Thinking summaries are accepted on newer adaptive-thinking model families.
+        if ([lowerModel containsString:@"-4-7"] || [lowerModel containsString:@"-4-8"] ||
+            [lowerModel containsString:@"-5-"] || [lowerModel containsString:@"-6-"]) {
+            thinking[@"display"] = @"summarized";
+        }
+        payload[@"thinking"] = thinking;
+        payload[@"output_config"] = @{ @"effort": effort };
+    } else if (legacyThinking && level > AIReasoningLevelLow) {
+        NSArray *budgets = @[@0, @1024, @2048, @4096, @8192];
+        NSInteger budget = [budgets[(NSUInteger)level] integerValue];
+        budget = MIN(budget, MAX(0, maxTokens - 1024));
+        if (budget >= 1024) payload[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": @(budget) };
+    }
+
+    // Anthropic executes this managed search tool server-side; no client-side browser credentials are needed.
+    if ([AppSettings webSearchEnabled]) {
+        payload[@"tools"] = @[@{ @"type": @"web_search_20250305", @"name": @"web_search", @"max_uses": @3 }];
+    }
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    // Streaming: give up if nothing at all arrives for 45 s. Single request: the whole answer must arrive within 120 s.
-    NSTimeInterval timeout = self.useStreaming ? 45 : 120;
+    // High-effort reasoning and grounded searches can take longer before the first SSE event.
+    // Use a generous inactivity timeout; the delegate resets it as data continues to arrive.
+    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:kClaudeMessagesURL]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:timeout];
@@ -115,6 +146,9 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     if (self.useStreaming) [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
     [request setValue:self.key forHTTPHeaderField:@"x-api-key"];
     [request setValue:kAnthropicVersion forHTTPHeaderField:@"anthropic-version"];
+    if (self.useFastSpeed && supportsFast && needsFastBeta) {
+        [request setValue:@"fast-mode-2026-02-01" forHTTPHeaderField:@"anthropic-beta"];
+    }
 
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
@@ -137,6 +171,26 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 didReceiveResponse:(NSURLResponse *)response
  completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
     self.status = [response isKindOfClass:[NSHTTPURLResponse class]] ? [(NSHTTPURLResponse *)response statusCode] : 0;
+    self.retryAfterSeconds = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSDictionary *headers = [(NSHTTPURLResponse *)response allHeaderFields];
+        for (id key in headers) {
+            if ([[key description] caseInsensitiveCompare:@"Retry-After"] != NSOrderedSame) continue;
+            id rawValue = headers[key];
+            NSTimeInterval delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
+            if (delay <= 0) {
+                // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
+                NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+                formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
+                formatter.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss z";
+                NSDate *retryDate = [formatter dateFromString:[rawValue description]];
+                if (retryDate) delay = [retryDate timeIntervalSinceNow];
+            }
+            self.retryAfterSeconds = MIN(60.0, MAX(0.0, delay));
+            break;
+        }
+    }
     completionHandler(NSURLSessionResponseAllow);
 }
 
@@ -180,9 +234,23 @@ didReceiveResponse:(NSURLResponse *)response
         }
     }
 
+    if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+        self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+    }
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
-    NSInteger status = self.status;
+    // Anthropic may deliver overloaded_error/rate_limit_error inside an HTTP 200 SSE stream.
+    // Translate those event types to retryable status codes for the controller.
+    NSInteger reportedStatus = self.status;
+    if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"overloaded_error"]) reportedStatus = 529;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"rate_limit_error"]) reportedStatus = 429;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"not_found_error"]) reportedStatus = 404;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"authentication_error"]) reportedStatus = 401;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"permission_error"]) reportedStatus = 403;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"request_too_large"]) reportedStatus = 413;
+    else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"api_error"]) reportedStatus = 500;
+    NSInteger status = reportedStatus;
     self.onDelta = nil;
+    self.onUsage = nil;
     self.onFinish = nil;
     if (finish) finish(result, status, detail);
 }
@@ -221,7 +289,15 @@ didReceiveResponse:(NSURLResponse *)response
 - (void)processEvent:(NSDictionary *)event {
     NSString *type = [event[@"type"] isKindOfClass:[NSString class]] ? event[@"type"] : @"";
 
-    if ([type isEqualToString:@"content_block_delta"]) {
+    if ([type isEqualToString:@"message_start"]) {
+        NSDictionary *message = [event[@"message"] isKindOfClass:[NSDictionary class]] ? event[@"message"] : nil;
+        NSDictionary *usage = [message[@"usage"] isKindOfClass:[NSDictionary class]] ? message[@"usage"] : nil;
+        long long input = [usage[@"input_tokens"] longLongValue]
+                        + [usage[@"cache_creation_input_tokens"] longLongValue]
+                        + [usage[@"cache_read_input_tokens"] longLongValue];
+        self.inputTokenUsage = MAX(self.inputTokenUsage, input);
+        self.outputTokenUsage = MAX(self.outputTokenUsage, [usage[@"output_tokens"] longLongValue]);
+    } else if ([type isEqualToString:@"content_block_delta"]) {
         NSDictionary *delta = [event[@"delta"] isKindOfClass:[NSDictionary class]] ? event[@"delta"] : nil;
         NSString *text = [delta[@"text"] isKindOfClass:[NSString class]] ? delta[@"text"] : nil;
         // Only plain text is shown (thinking deltas, tool JSON, etc. are not requested and would be ignored here).
@@ -231,7 +307,9 @@ didReceiveResponse:(NSURLResponse *)response
         }
     } else if ([type isEqualToString:@"message_delta"]) {
         NSDictionary *delta = [event[@"delta"] isKindOfClass:[NSDictionary class]] ? event[@"delta"] : nil;
+        NSDictionary *usage = [event[@"usage"] isKindOfClass:[NSDictionary class]] ? event[@"usage"] : nil;
         if ([delta[@"stop_reason"] isKindOfClass:[NSString class]]) self.stopReason = delta[@"stop_reason"];
+        self.outputTokenUsage = MAX(self.outputTokenUsage, [usage[@"output_tokens"] longLongValue]);
     } else if ([type isEqualToString:@"error"]) {
         // An error can arrive after the 200 response has started (for example overloaded_error).
         NSDictionary *err = [event[@"error"] isKindOfClass:[NSDictionary class]] ? event[@"error"] : nil;
@@ -247,6 +325,12 @@ didReceiveResponse:(NSURLResponse *)response
     id json = [NSJSONSerialization JSONObjectWithData:self.buffer options:0 error:nil];
     if (![json isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *root = json;
+    NSDictionary *usage = [root[@"usage"] isKindOfClass:[NSDictionary class]] ? root[@"usage"] : nil;
+    long long input = [usage[@"input_tokens"] longLongValue]
+                    + [usage[@"cache_creation_input_tokens"] longLongValue]
+                    + [usage[@"cache_read_input_tokens"] longLongValue];
+    self.inputTokenUsage = MAX(self.inputTokenUsage, input);
+    self.outputTokenUsage = MAX(self.outputTokenUsage, [usage[@"output_tokens"] longLongValue]);
     if ([root[@"stop_reason"] isKindOfClass:[NSString class]]) self.stopReason = root[@"stop_reason"];
     if ([root[@"type"] isEqualToString:@"error"]) { [self processEvent:root]; return; }
 
