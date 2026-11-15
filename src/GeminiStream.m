@@ -13,12 +13,15 @@
 @property (strong, nonatomic) NSMutableData *buffer;       // unfinished SSE bytes
 @property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
 @property (assign, nonatomic) NSInteger status;
+@property (assign, nonatomic) NSTimeInterval retryAfterSeconds;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
 @property (copy, nonatomic) NSString *blockReason;         // promptFeedback.blockReason or a blocking finishReason
 @property (assign, nonatomic) NSInteger inStreamErrorStatus;   // error object delivered inside a 200 stream
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
+@property (assign, nonatomic) long long inputTokenUsage;
+@property (assign, nonatomic) long long outputTokenUsage;
 @end
 
 @implementation GeminiStream
@@ -68,36 +71,74 @@
     NSString *urlString = [NSString stringWithFormat:
         @"https://generativelanguage.googleapis.com/v1beta/models/%@:%@", escapedModel, method];
 
-    NSInteger outputTokens = [AppSettings maxOutputTokens];
+    NSInteger requestedOutputTokens = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderGemini];
     // Older cached model lists may not include token metadata yet; stay conservative until the list refreshes.
-    outputTokens = modelCap > 0 ? MIN(outputTokens, modelCap) : MIN(outputTokens, 8192);
-    NSMutableDictionary *generationConfig = [@{ @"maxOutputTokens": @(outputTokens) } mutableCopy];
-    // Gemini 2.5+ supports thinkingBudget. Older models receive no unsupported field.
+    if (modelCap <= 0) modelCap = 8192;
     NSString *lowerModel = self.model.lowercaseString;
-    if ([lowerModel containsString:@"2.5"]) {
-        AIReasoningLevel level = [AppSettings reasoningLevel];
-        NSInteger thinkingBudget = 8192;
-        switch (level) {
-            case AIReasoningLevelLow: thinkingBudget = 1024; break;
-            case AIReasoningLevelMedium: thinkingBudget = 4096; break;
-            case AIReasoningLevelHigh: thinkingBudget = 8192; break;
-            case AIReasoningLevelVeryHigh: thinkingBudget = 16384; break;
-            case AIReasoningLevelMax: thinkingBudget = 24576; break;
+    AIReasoningLevel reasoning = [AppSettings reasoningLevel];
+
+    NSMutableDictionary *generationConfig = [NSMutableDictionary dictionary];
+    // maxOutputTokens includes hidden reasoning tokens. Keep an answer reserve and
+    // clamp the reasoning budget to the model's true output ceiling to avoid invalid
+    // requests (a common source of 400s on older cached model metadata).
+    BOOL supportsThinking = [lowerModel containsString:@"gemini-2.5"] ||
+                            [lowerModel containsString:@"gemini-3"] ||
+                            [lowerModel containsString:@"gemini-4"];
+    NSInteger answerReserve = supportsThinking
+        ? MIN(requestedOutputTokens, MAX(1024, (modelCap * 2) / 3))
+        : MIN(requestedOutputTokens, modelCap);
+    NSInteger availableThinking = supportsThinking ? MAX(0, modelCap - answerReserve) : 0;
+    NSInteger thinkingBudget = 0;
+    // Gemini 3 uses lowercase thinkingLevel values. Gemini 2.5 uses explicit budgets.
+    // Keep model-specific documented ranges: Pro up to 32,768; Flash variants up to 24,576.
+    if ([lowerModel containsString:@"gemini-4"]) {
+        NSArray *levels = @[@"low", @"low", @"medium", @"high", @"high"];
+        generationConfig[@"thinkingConfig"] = @{ @"thinkingLevel": levels[(NSUInteger)reasoning] };
+    } else if ([lowerModel containsString:@"gemini-3"]) {
+        // Gemini 3.1 Pro does not accept "minimal"; other listed Gemini 3 Flash models do.
+        NSArray *levels = [lowerModel containsString:@"pro"]
+            ? @[@"low", @"low", @"medium", @"high", @"high"]
+            : @[@"minimal", @"low", @"medium", @"high", @"high"];
+        generationConfig[@"thinkingConfig"] = @{ @"thinkingLevel": levels[(NSUInteger)reasoning] };
+    } else if ([lowerModel containsString:@"gemini-2.5"]) {
+        BOOL proModel = [lowerModel containsString:@"pro"];
+        NSArray *budgets = proModel
+            ? @[@128, @1024, @8192, @24576, @32768]
+            : @[@0, @1024, @4096, @16384, @24576];
+        NSInteger desiredBudget = [budgets[(NSUInteger)reasoning] integerValue];
+        thinkingBudget = MIN(desiredBudget, availableThinking);
+        // Gemini 2.5 Pro requires at least 128 tokens when explicit thinking is enabled.
+        if (proModel && thinkingBudget > 0 && thinkingBudget < 128) thinkingBudget = 0;
+        if (!proModel || thinkingBudget >= 128) {
+            generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
         }
-        generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
     }
+
+    NSInteger reasoningHeadroom = thinkingBudget;
+    if ([lowerModel containsString:@"gemini-3"] || [lowerModel containsString:@"gemini-4"]) {
+        NSInteger desiredHeadroom = reasoning >= AIReasoningLevelMax ? 16384 :
+                                    (reasoning >= AIReasoningLevelVeryHigh ? 12288 :
+                                     (reasoning >= AIReasoningLevelHigh ? 8192 : 2048));
+        reasoningHeadroom = MIN(desiredHeadroom, availableThinking);
+    }
+    NSInteger outputTokens = MIN(modelCap, answerReserve + reasoningHeadroom);
+    generationConfig[@"maxOutputTokens"] = @(MAX(1, outputTokens));
+
     // Gemini image-generation models require both text and image response modalities.
-    if ([self.model.lowercaseString rangeOfString:@"image"].location != NSNotFound) {
+    if ([lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"]) {
         generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
     }
+    BOOL imageGenerationModel = [lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"];
     NSMutableDictionary *payload = [@{ @"contents": [GeminiStream contentsFromTurns:self.turns],
                                        @"generationConfig": generationConfig } mutableCopy];
-    if (self.system.length > 0) payload[@"system_instruction"] = @{ @"parts": @[ @{ @"text": self.system } ] };
+    if (self.system.length > 0) payload[@"systemInstruction"] = @{ @"parts": @[ @{ @"text": self.system } ] };
+    if ([AppSettings webSearchEnabled] && !imageGenerationModel) payload[@"tools"] = @[@{ @"google_search": @{} }];
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    // Streaming: give up if nothing at all arrives for 45 s. Single-shot: the whole answer must arrive within 120 s.
-    NSTimeInterval timeout = self.useStreaming ? 45 : 120;
+    // High-effort reasoning and grounded searches can take longer before the first SSE event.
+    // Use a generous inactivity timeout; the delegate resets it as data continues to arrive.
+    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:timeout];
@@ -132,6 +173,26 @@
 didReceiveResponse:(NSURLResponse *)response
  completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
     self.status = [response isKindOfClass:[NSHTTPURLResponse class]] ? [(NSHTTPURLResponse *)response statusCode] : 0;
+    self.retryAfterSeconds = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSDictionary *headers = [(NSHTTPURLResponse *)response allHeaderFields];
+        for (id key in headers) {
+            if ([[key description] caseInsensitiveCompare:@"Retry-After"] != NSOrderedSame) continue;
+            id rawValue = headers[key];
+            NSTimeInterval delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
+            if (delay <= 0) {
+                // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
+                NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+                formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
+                formatter.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss z";
+                NSDate *retryDate = [formatter dateFromString:[rawValue description]];
+                if (retryDate) delay = [retryDate timeIntervalSinceNow];
+            }
+            self.retryAfterSeconds = MIN(60.0, MAX(0.0, delay));
+            break;
+        }
+    }
     completionHandler(NSURLSessionResponseAllow);
 }
 
@@ -173,10 +234,16 @@ didReceiveResponse:(NSURLResponse *)response
         }
     }
 
+    if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+        self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+    }
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
-    NSInteger status = self.status;
+    // Streaming endpoints can return HTTP 200 and then send an error object in an SSE frame.
+    // Surface its embedded status (e.g. 503/429) to the controller's retry policy.
+    NSInteger status = self.inStreamErrorStatus > 0 ? self.inStreamErrorStatus : self.status;
     self.onDelta = nil;
     self.onImage = nil;
+    self.onUsage = nil;
     self.onFinish = nil;
     if (finish) finish(result, status, detail);
 }
@@ -214,6 +281,12 @@ didReceiveResponse:(NSURLResponse *)response
 
 // One decoded JSON object from the model (a stream event, or the whole single-shot reply).
 - (void)processChunk:(NSDictionary *)chunk {
+    NSDictionary *usage = [chunk[@"usageMetadata"] isKindOfClass:[NSDictionary class]] ? chunk[@"usageMetadata"] : nil;
+    if (usage) {
+        self.inputTokenUsage = MAX(self.inputTokenUsage, [usage[@"promptTokenCount"] longLongValue]);
+        long long output = [usage[@"candidatesTokenCount"] longLongValue] + [usage[@"thoughtsTokenCount"] longLongValue];
+        self.outputTokenUsage = MAX(self.outputTokenUsage, output);
+    }
     // An error can arrive inside the stream itself.
     NSDictionary *errorObject = [chunk[@"error"] isKindOfClass:[NSDictionary class]] ? chunk[@"error"] : nil;
     if (errorObject) {
