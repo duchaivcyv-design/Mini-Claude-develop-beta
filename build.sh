@@ -23,10 +23,7 @@ xcrun --sdk iphoneos clang \
   -miphoneos-version-min=12.0 \
   -isysroot "$SDK" \
   -fobjc-arc -fmodules -O2 -Wall -Wno-deprecated-declarations \
-  src/main.m \
-  src/ChatViewController.m \
-  src/ClaudeStream.m \
-  src/*.c \
+  src/*.m src/*.c 
   -framework UIKit \
   -framework Foundation \
   -framework Security \
