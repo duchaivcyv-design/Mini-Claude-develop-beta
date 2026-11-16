@@ -117,6 +117,8 @@ static NSString *ClippedForLog(NSString *text) {
 @property (assign, nonatomic) BOOL didRecoverModel404;
 @property (assign, nonatomic) BOOL didFallbackFromFastMode;
 @property (strong, nonatomic) NSMutableString *streamBuffer;
+@property (strong, nonatomic) NSMutableString *longReplyAccumulator; // completed chunks from provider output-limit continuations
+@property (assign, nonatomic) NSUInteger longReplyContinuationCount;
 @property (strong, nonatomic) NSMutableArray *streamGeneratedAttachments;
 
 @property (strong, nonatomic) NSMutableArray *pendingAttachments;   // attachments waiting to be sent with the next message
@@ -1813,6 +1815,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 - (void)startStreamingReply {
     if (![self checkKeyForCurrentModel]) return;
     self.streamBuffer = [NSMutableString string];
+    self.longReplyAccumulator = [NSMutableString string];
+    self.longReplyContinuationCount = 0;
     self.streamRetryCount = 0;
     self.didRecoverModel404 = NO;
     self.didFallbackFromFastMode = NO;
@@ -1852,7 +1856,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *responseDirective = @"\n\n[RESPONSE COMPLETENESS] Unless the user explicitly asks for a short answer, answer every part with enough useful detail to act on it. Do not substitute a long outline for the requested explanation, implementation, or deliverable. Include relevant steps, examples, assumptions, and limitations without filler. For technical topics, identify the actual cause before proposing a change; distinguish verified facts from hypotheses. Never claim a search, API action, file edit, or build succeeded unless it actually did.";
     selectedPrompt = [selectedPrompt stringByAppendingString:responseDirective];
     if (codingTask) {
-        NSString *codingDirective = @"\n\n[CODING RESPONSE REQUIREMENTS] For a coding, debugging, or source-editing request, deliver implementation rather than an outline alone. Include the complete requested function or changed file sections with all required declarations/imports; do not replace code with ellipses, placeholders, TODOs, or pseudo-code. Do not describe a large architecture while returning only a tiny code fragment. Preserve unrelated behavior and make only requested changes. Check method names, property declarations, types, API payload fields, and error paths for consistency. Explain the exact files and behavior changed, then clearly state anything not build-tested. Prefer complete, compilable, minimal code over an inflated architecture proposal. If the model output limit is reached, say which exact file/section remains instead of claiming the work is complete.";
+        NSString *codingDirective = @"\n\n[CODING RESPONSE REQUIREMENTS] For a coding, debugging, or source-editing request, deliver implementation rather than an outline alone. Include the complete requested function or changed file sections with all required declarations/imports; do not replace code with ellipses, placeholders, TODOs, or pseudo-code. Do not describe a large architecture while returning only a tiny code fragment. When the user asks for a complete file or a large implementation, provide the full requested code, not a shortened sample. Do not arbitrarily stop after the design or first few functions; continue until every requested component is implemented. Preserve unrelated behavior and make only requested changes. Check method names, property declarations, types, API payload fields, and error paths for consistency. Explain the exact files and behavior changed, then clearly state anything not build-tested. Prefer complete, compilable code over an inflated architecture proposal. The app automatically requests continuation when the provider reports its output-token limit; continue from the exact next line without repeating earlier code. If continuation cannot proceed because the model context or provider limit is reached, state the precise remaining section instead of claiming the work is complete.";
         selectedPrompt = [selectedPrompt stringByAppendingString:codingDirective];
     }
     if ([AppSettings webSearchEnabled]) {
@@ -1880,8 +1884,22 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.attemptIsStreaming = useStreaming;
     AIProvider provider = [Provider forModelId:self.model];
     NSString *key = [KeyStore loadKeyForProvider:provider] ?: @"";
-    NSArray *turns = [self buildTurns];
+    NSMutableArray *turns = [[self buildTurns] mutableCopy];
     NSString *system = [self effectiveSystemPrompt];
+    if (self.longReplyAccumulator.length > 0) {
+        // Continue from the exact accumulated output. Keep the provider conversation
+        // format valid (assistant -> user) and prune only older context if needed.
+        [turns addObject:[@{ @"role": @"assistant", @"parts": @[@{ @"type": @"text", @"text": [self.longReplyAccumulator copy] }] } mutableCopy]];
+        NSString *continueInstruction = @"Continue the response exactly where the previous assistant message ended. Do not repeat, summarize, shorten, or rewrite any text already provided. If writing code, continue the same file/code block with identical indentation and complete syntax; include every remaining line, declaration, implementation, and closing delimiter. Do not replace code with placeholders or ellipses. Finish the original request fully.";
+        [turns addObject:[@{ @"role": @"user", @"parts": @[@{ @"type": @"text", @"text": continueInstruction }] } mutableCopy]];
+
+        NSInteger inputCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
+        NSUInteger safeCharCap = inputCap > 0 ? (NSUInteger)inputCap * 2 : 64000;
+        NSUInteger reserve = system.length + 4096;
+        safeCharCap = safeCharCap > reserve ? safeCharCap - reserve : 16000;
+        while (turns.count > 3 && [self totalTextChars:turns] > safeCharCap) [turns removeObjectAtIndex:0];
+        while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
+    }
     id<ChatStreaming> stream = (provider == AIProviderClaude)
         ? (id<ChatStreaming>)[[ClaudeStream alloc] initWithKey:key model:self.model turns:turns system:system]
         : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:self.model turns:turns system:system];
@@ -1938,6 +1956,33 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
     AIProvider currentProvider = [Provider forModelId:self.model];
+    if (error == GeminiStreamErrorNone && status == 200 && [detail isEqualToString:@"__OUTPUT_LIMIT_REACHED__"] && partial.length > 0) {
+        // Provider stopped only because this response segment reached its output cap.
+        // Automatically request the next segment while keeping one continuous UI bubble.
+        const NSUInteger kMaxAutomaticContinuations = 10;
+        NSInteger continuationInputCap = [ModelStore maxInputTokensForModelId:self.model provider:currentProvider];
+        NSUInteger continuationCharCap = continuationInputCap > 0 ? (NSUInteger)continuationInputCap * 2 : 64000;
+        NSUInteger continuationPromptChars = [self effectiveSystemPrompt].length + 8192;
+        continuationCharCap = continuationCharCap > continuationPromptChars ? continuationCharCap - continuationPromptChars : 0;
+        BOOL continuationFitsContext = continuationCharCap > 0 &&
+            self.longReplyAccumulator.length + partial.length < (continuationCharCap * 3) / 4;
+        if (self.longReplyContinuationCount < kMaxAutomaticContinuations &&
+            self.longReplyAccumulator.length + partial.length < 2000000 && continuationFitsContext) {
+            if (!self.longReplyAccumulator) self.longReplyAccumulator = [NSMutableString string];
+            [self.longReplyAccumulator appendString:partial];
+            self.longReplyContinuationCount++;
+            self.stream = nil;
+            self.streamBuffer = [NSMutableString string];
+            [DiagnosticLog log:@"long response reached provider output cap; continuing segment %lu/%lu accumulatedChars=%lu",
+                              (unsigned long)self.longReplyContinuationCount, (unsigned long)kMaxAutomaticContinuations,
+                              (unsigned long)self.longReplyAccumulator.length];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+            });
+            return;
+        }
+        detail = @"Đã đạt giới hạn an toàn của chuỗi tự nối tiếp. Phần đã tạo được giữ lại; gửi 'tiếp tục' để lấy phần còn lại.";
+    }
     NSInteger claudeModelOutputCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
     NSInteger configuredOutputCap = [AppSettings maxOutputTokens];
     BOOL largeClaudeReply = currentProvider == AIProviderClaude &&
@@ -2073,14 +2118,21 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.streamBuffer = nil;
     self.streaming = NO;
 
+    NSString *completeReply = self.longReplyAccumulator.length > 0
+        ? [self.longReplyAccumulator stringByAppendingString:(partial ?: @"")]
+        : partial;
     NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
-    if (partial.length > 0 || generatedAttachments.count > 0) {
-        [self appendAssistantMessage:partial attachments:generatedAttachments];
+    if (completeReply.length > 0 || generatedAttachments.count > 0) {
+        [self appendAssistantMessage:completeReply attachments:generatedAttachments];
     }
+    self.longReplyAccumulator = nil;
+    self.longReplyContinuationCount = 0;
     self.streamGeneratedAttachments = nil;
-    [self callJS:@"end" args:@[partial]];
+    [self callJS:@"end" args:@[(completeReply ?: @"")]];
     if (generatedAttachments.count > 0) [self renderConversation];
-    if (error != GeminiStreamErrorNone && error != GeminiStreamErrorCancelled) {
+    if ([detail hasPrefix:@"Đã đạt giới hạn an toàn của chuỗi tự nối tiếp."]) {
+        [self callJS:@"error" args:@[detail, @YES]];
+    } else if (error != GeminiStreamErrorNone && error != GeminiStreamErrorCancelled) {
         [self callJS:@"error" args:@[[self messageForError:error status:status detail:detail], @YES]];
     }
     [self updateSendButton];
@@ -2104,6 +2156,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 - (void)abandonStream {
     if (!self.stream) return;
     NSString *partial = [self.streamBuffer copy] ?: @"";
+    NSString *completeReply = self.longReplyAccumulator.length > 0
+        ? [self.longReplyAccumulator stringByAppendingString:partial]
+        : partial;
     id<ChatStreaming> old = self.stream;
     old.onDelta = nil;
     old.onFinish = nil;
@@ -2112,7 +2167,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     self.streaming = NO;
     [old cancel];
     NSArray *generatedAttachments = [self.streamGeneratedAttachments copy] ?: @[];
-    if (partial.length > 0 || generatedAttachments.count > 0) [self appendAssistantMessage:partial attachments:generatedAttachments];
+    if (completeReply.length > 0 || generatedAttachments.count > 0) [self appendAssistantMessage:completeReply attachments:generatedAttachments];
+    self.longReplyAccumulator = nil;
+    self.longReplyContinuationCount = 0;
     self.streamGeneratedAttachments = nil;
     [self updateSendButton];
 }
