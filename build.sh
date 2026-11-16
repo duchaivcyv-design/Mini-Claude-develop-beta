@@ -31,8 +31,7 @@ xcrun --sdk iphoneos clang \
   -framework ImageIO \
   -framework AVFoundation \
   -framework CoreMedia \
-  -framework CoreAudioTypes \
-  -framework UIUtilities \
+  -framework CoreAudio \
   -lz \
   -o "$APPDIR/$APP"
   
