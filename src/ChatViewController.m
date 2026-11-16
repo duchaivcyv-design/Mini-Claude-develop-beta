@@ -86,9 +86,6 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIScrollView *attachStrip;
 @property (strong, nonatomic) UIView *inputBox;
 @property (strong, nonatomic) UIButton *attachButton;
-@property (strong, nonatomic) UIButton *searchChipButton;
-@property (strong, nonatomic) UIView *toolMenuOverlay;
-@property (strong, nonatomic) UIView *toolMenuCard;
 @property (strong, nonatomic) UIView *toolRow;
 @property (strong, nonatomic) UIButton *reasoningButton;
 @property (strong, nonatomic) UIButton *searchButton;
@@ -279,17 +276,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self.attachButton addTarget:self action:@selector(attachTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.inputBox addSubview:self.attachButton];
 
-    self.searchChipButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.searchChipButton.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
-    self.searchChipButton.layer.cornerRadius = 11;
-    self.searchChipButton.clipsToBounds = YES;
-    self.searchChipButton.backgroundColor = [UIColor colorWithRed:0.10 green:0.48 blue:0.34 alpha:0.18];
-    [self.searchChipButton setTitleColor:[UIColor colorWithRed:0.22 green:0.82 blue:0.60 alpha:1.0] forState:UIControlStateNormal];
-    [self.searchChipButton setTitle:@"⌕ Tìm kiếm   ×" forState:UIControlStateNormal];
-    [self.searchChipButton addTarget:self action:@selector(searchChipTapped) forControlEvents:UIControlEventTouchUpInside];
-    self.searchChipButton.hidden = YES;
-    [self.inputBox addSubview:self.searchChipButton];
-
     self.textView = [[UITextView alloc] init];
     self.textView.backgroundColor = [UIColor clearColor];
     self.textView.font = [UIFont systemFontOfSize:17];
@@ -327,7 +313,6 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat stripHeight = showStrip ? kStripHeight : 0;
 
     CGFloat boxWidth = width - 24;
-    BOOL searchActive = [AppSettings webSearchEnabled];
     CGFloat leftPad = 40;     // room for the attach button
     CGFloat rightPad = 44;    // room for the send button
     CGFloat textWidth = boxWidth - leftPad - rightPad;
@@ -335,9 +320,7 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat textHeight = MIN(MAX(fit, 38), kMaxInputHeight);
     self.textView.scrollEnabled = fit > kMaxInputHeight;
 
-    // Search is shown as a compact removable chip in its own first line of the composer.
-    CGFloat searchRowHeight = searchActive ? 27.0 : 0.0;
-    CGFloat boxHeight = textHeight + 8 + searchRowHeight;
+    CGFloat boxHeight = textHeight + 8;
     CGFloat toolsY = 8 + stripHeight;
     CGFloat boxY = toolsY + kToolsRowHeight + 4;
     CGFloat barHeight = boxY + boxHeight + 8;
@@ -354,10 +337,8 @@ static NSString *ClippedForLog(NSString *text) {
     self.mentionButton.frame = CGRectMake(toolWidth * 3, 0, toolWidth, kToolsRowHeight);
     self.inputBox.frame = CGRectMake(12, boxY, boxWidth, boxHeight);
     self.attachButton.frame = CGRectMake(5, boxHeight - 36 - 5, 36, 36);
-    self.searchChipButton.hidden = !searchActive;
-    if (searchActive) self.searchChipButton.frame = CGRectMake(46, 5, 94, 22);
-    self.textView.frame = CGRectMake(leftPad, searchRowHeight + 4, textWidth, textHeight);
-    self.placeholderLabel.frame = CGRectMake(leftPad + 11, searchRowHeight + 13, textWidth - 12, 20);
+    self.textView.frame = CGRectMake(leftPad, 4, textWidth, textHeight);
+    self.placeholderLabel.frame = CGRectMake(leftPad + 11, 13, textWidth - 12, 20);
     self.sendButton.frame = CGRectMake(boxWidth - 36 - 5, boxHeight - 36 - 5, 36, 36);
     [self updateToolButtons];
 
@@ -399,8 +380,6 @@ static NSString *ClippedForLog(NSString *text) {
     NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"][(NSUInteger)[AppSettings reasoningLevel]];
     [self.reasoningButton setTitle:[NSString stringWithFormat:@"🧠 %@", level] forState:UIControlStateNormal];
     [self.searchButton setTitle:[AppSettings webSearchEnabled] ? @"⌕ Tìm ✓" : @"⌕ Tìm kiếm" forState:UIControlStateNormal];
-    self.searchChipButton.hidden = ![AppSettings webSearchEnabled];
-    [self.searchChipButton setTitle:@"⌕ Tìm kiếm   ×" forState:UIControlStateNormal];
 }
 
 - (void)reasoningTapped {
@@ -515,14 +494,7 @@ static NSString *ClippedForLog(NSString *text) {
 - (void)searchTapped {
     [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
     [self updateToolButtons];
-    [self relayoutAnimated];
-}
-
-- (void)searchChipTapped {
-    if (![AppSettings webSearchEnabled]) return;
-    [AppSettings setWebSearchEnabled:NO];
-    [self updateToolButtons];
-    [self relayoutAnimated];
+    [self showAlertMessage:[AppSettings webSearchEnabled] ? @"Tìm kiếm web đã bật cho các API hỗ trợ công cụ tìm kiếm." : @"Tìm kiếm web đã tắt."];
 }
 
 - (void)fastTapped {
@@ -1191,195 +1163,44 @@ static NSString *ClippedForLog(NSString *text) {
 }
 
 - (void)attachTapped {
-    if (self.streaming || self.toolMenuOverlay) return;
+    if (self.streaming) return;
     [self.view endEditing:YES];
-    if (self.keyboardOverlap <= 0) {
-        [self showToolMenu];
-    } else {
-        __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(260 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-            ChatViewController *me = weakSelf;
-            if (me && !me.streaming) [me showToolMenu];
-        });
+    if ((NSInteger)self.pendingAttachments.count + self.importsInFlight >= kMaxAttachmentsPerMessage) {
+        [self showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
+        return;
     }
-}
 
-- (void)dismissToolMenu {
-    if (!self.toolMenuOverlay) return;
-    [UIView animateWithDuration:0.16 animations:^{
-        self.toolMenuCard.alpha = 0.0;
-        self.toolMenuCard.transform = CGAffineTransformMakeTranslation(0, 12);
-        self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.0];
-    } completion:^(BOOL finished) {
-        [self.toolMenuOverlay removeFromSuperview];
-        self.toolMenuOverlay = nil;
-        self.toolMenuCard = nil;
-    }];
-}
-
-- (void)toolMenuItemTapped:(UIControl *)sender {
-    NSInteger item = sender.tag;
-    [self dismissToolMenu];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_title")
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(190 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-        ChatViewController *me = weakSelf;
-        if (!me) return;
-        if (item <= 3 && (NSInteger)me.pendingAttachments.count + me.importsInFlight >= kMaxAttachmentsPerMessage) {
-            [me showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
-            return;
-        }
-        switch (item) {
-            case 0: // Photos — multi-select up to the configured per-message limit
-                [DiagnosticLog log:@"attach menu: photos"];
-                [me presentPhotoLibraryPicker];
-                break;
-            case 1: // Files
-            case 2: // Library browser
-                [DiagnosticLog log:@"attach menu: document picker"];
-                [me presentDocumentPicker];
-                break;
-            case 3: // Camera
-                if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
-                    [DiagnosticLog log:@"attach menu: camera"];
-                    [me presentImagePickerWithSource:UIImagePickerControllerSourceTypeCamera];
-                } else {
-                    [me showAlertMessage:@"Camera không khả dụng trên thiết bị này."];
-                }
-                break;
-            case 4: // Web search
-                [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
-                [me updateToolButtons];
-                [me relayoutAnimated];
-                break;
-            case 5: // Reasoning
-                [me reasoningTapped];
-                break;
-            case 6: // More tools
-                [me mentionTapped];
-                break;
-            case 7: // Image generation command
-                me.textView.text = @"/tạo ảnh ";
-                [me textViewDidChange:me.textView];
-                [me.textView becomeFirstResponder];
-                break;
-            default:
-                break;
-        }
-    });
-}
-
-- (void)addToolMenuRowToCard:(UIView *)card y:(CGFloat)y icon:(NSString *)icon title:(NSString *)title subtitle:(NSString *)subtitle tag:(NSInteger)tag width:(CGFloat)width {
-    UIControl *row = [[UIControl alloc] initWithFrame:CGRectMake(10, y, width - 20, 46)];
-    row.tag = tag;
-    row.layer.cornerRadius = 13;
-    row.backgroundColor = [UIColor clearColor];
-    [row addTarget:self action:@selector(toolMenuItemTapped:) forControlEvents:UIControlEventTouchUpInside];
-
-    UILabel *iconLabel = [[UILabel alloc] initWithFrame:CGRectMake(13, 0, 30, 46)];
-    iconLabel.text = icon;
-    iconLabel.font = [UIFont systemFontOfSize:21];
-    iconLabel.textAlignment = NSTextAlignmentCenter;
-    [row addSubview:iconLabel];
-
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(52, 0, width - 92, 46)];
-    titleLabel.text = title;
-    titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    titleLabel.textColor = [Theme text];
-    [row addSubview:titleLabel];
-
-    if (subtitle.length > 0) {
-        titleLabel.frame = CGRectMake(52, 3, width - 92, 21);
-        UILabel *detail = [[UILabel alloc] initWithFrame:CGRectMake(52, 23, width - 92, 18)];
-        detail.text = subtitle;
-        detail.font = [UIFont systemFontOfSize:11];
-        detail.textColor = [Theme secondaryText];
-        [row addSubview:detail];
+    if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
+        [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_camera") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [DiagnosticLog log:@"attach: camera chosen"];
+            [weakSelf presentImagePickerWithSource:UIImagePickerControllerSourceTypeCamera];
+        }]];
     }
-    [card addSubview:row];
-}
-
-- (void)showToolMenu {
-    if (self.toolMenuOverlay) return;
-    CGFloat width = CGRectGetWidth(self.view.bounds);
-    CGFloat cardWidth = MIN(width - 28.0, 430.0);
-    CGFloat rowHeight = 46.0;
-    BOOL canUseCamera = [UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera];
-    NSArray *items = @[
-        @{@"icon":@"▧", @"title":@"Ảnh", @"subtitle":@"Chọn ảnh từ thư viện", @"tag":@0},
-        @{@"icon":@"⌁", @"title":@"Tệp", @"subtitle":@"PDF, Word, video và tài liệu", @"tag":@1},
-        @{@"icon":@"▣", @"title":@"Thêm từ thư viện", @"subtitle":@"Duyệt các tệp đã lưu", @"tag":@2},
-        @{@"icon":@"◎", @"title":@"Camera", @"subtitle":@"Chụp ảnh mới", @"tag":@3},
-        @{@"icon":@"◉", @"title":@"Tìm kiếm trên mạng", @"subtitle":@"Tìm thông tin mới trên web", @"tag":@4},
-        @{@"icon":@"♧", @"title":@"Suy nghĩ đi", @"subtitle":@"Điều chỉnh mức suy luận", @"tag":@5},
-        @{@"icon":@"✦", @"title":@"Tạo ảnh", @"subtitle":@"Nhập mô tả để tạo ảnh", @"tag":@7},
-        @{@"icon":@"@", @"title":@"Công cụ khác", @"subtitle":@"Tạo tệp và lệnh bổ sung", @"tag":@6}
-    ];
-    CGFloat headerHeight = 42.0;
-    CGFloat cancelHeight = 42.0;
-    NSUInteger visibleItemCount = items.count - (canUseCamera ? 0 : 1);
-    CGFloat cardHeight = headerHeight + rowHeight * visibleItemCount + cancelHeight + 12.0;
-    CGFloat safeTop = 12.0;
-    if (@available(iOS 11.0, *)) safeTop += self.view.safeAreaInsets.top;
-    CGFloat bottomY = CGRectGetMinY(self.inputBar.frame) - 8.0;
-    CGFloat cardY = MAX(safeTop, bottomY - cardHeight);
-    if (cardY + cardHeight > bottomY) cardHeight = MAX(250.0, bottomY - safeTop);
-
-    self.toolMenuOverlay = [[UIView alloc] initWithFrame:self.view.bounds];
-    self.toolMenuOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.0];
-    UIButton *outside = [UIButton buttonWithType:UIButtonTypeCustom];
-    outside.frame = self.toolMenuOverlay.bounds;
-    outside.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [outside addTarget:self action:@selector(dismissToolMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.toolMenuOverlay addSubview:outside];
-
-    self.toolMenuCard = [[UIView alloc] initWithFrame:CGRectMake((width - cardWidth) / 2.0, cardY, cardWidth, cardHeight)];
-    self.toolMenuCard.backgroundColor = [Theme surface];
-    self.toolMenuCard.layer.cornerRadius = 22.0;
-    self.toolMenuCard.layer.borderWidth = 1.0;
-    self.toolMenuCard.layer.borderColor = [Theme border].CGColor;
-    self.toolMenuCard.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.toolMenuCard.layer.shadowOpacity = 0.22;
-    self.toolMenuCard.layer.shadowRadius = 18.0;
-    self.toolMenuCard.layer.shadowOffset = CGSizeMake(0, 6);
-    [self.toolMenuOverlay addSubview:self.toolMenuCard];
-
-    UILabel *heading = [[UILabel alloc] initWithFrame:CGRectMake(18, 8, cardWidth - 36, 30)];
-    heading.text = @"Công cụ";
-    heading.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    heading.textColor = [Theme secondaryText];
-    [self.toolMenuCard addSubview:heading];
-
-    CGFloat y = headerHeight;
-    for (NSDictionary *item in items) {
-        NSInteger tag = [item[@"tag"] integerValue];
-        if (tag == 3 && !canUseCamera) continue;
-        NSString *title = item[@"title"];
-        NSString *subtitle = item[@"subtitle"];
-        if (tag == 4 && [AppSettings webSearchEnabled]) {
-            title = @"Tắt tìm kiếm trên mạng";
-            subtitle = @"Tìm kiếm đang được bật";
-        }
-        [self addToolMenuRowToCard:self.toolMenuCard y:y icon:item[@"icon"] title:title subtitle:subtitle tag:tag width:cardWidth];
-        y += rowHeight;
+    if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypePhotoLibrary]) {
+        [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_photo") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [DiagnosticLog log:@"attach: photo library chosen"];
+            [weakSelf presentPhotoLibraryPicker];
+        }]];
     }
-
-    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
-    cancel.frame = CGRectMake(12, cardHeight - cancelHeight - 2, cardWidth - 24, cancelHeight);
-    [cancel setTitle:L(@"cancel") forState:UIControlStateNormal];
-    cancel.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    [cancel setTitleColor:[Theme accent] forState:UIControlStateNormal];
-    [cancel addTarget:self action:@selector(dismissToolMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.toolMenuCard addSubview:cancel];
-
-    [self.view addSubview:self.toolMenuOverlay];
-    self.toolMenuCard.transform = CGAffineTransformMakeTranslation(0, 12);
-    self.toolMenuCard.alpha = 0.0;
-    [UIView animateWithDuration:0.20 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-        self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.20];
-        self.toolMenuCard.transform = CGAffineTransformIdentity;
-        self.toolMenuCard.alpha = 1.0;
-    } completion:nil];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_file") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [DiagnosticLog log:@"attach: file picker chosen"];
+        [weakSelf presentDocumentPicker];
+    }]];
+    NSString *searchTitle = [AppSettings webSearchEnabled] ? @"Tìm kiếm trên mạng · Đang bật ✓" : @"Tìm kiếm trên mạng · Đang tắt";
+    [sheet addAction:[UIAlertAction actionWithTitle:searchTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [weakSelf searchTapped];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Mức suy luận AI…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [weakSelf reasoningTapped];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = self.attachButton;
+    sheet.popoverPresentationController.sourceRect = self.attachButton.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)presentImagePickerWithSource:(UIImagePickerControllerSourceType)source {
