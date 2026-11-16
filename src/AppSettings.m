@@ -238,19 +238,28 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
 + (NSInteger)maxOutputTokens {
+    // Zero means: do not impose an app-side output cap; use the selected model's published API limit.
+    // The provider limit still applies and is enforced in GeminiStream / ClaudeStream.
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
-    return (value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 8192;
+    return value == 0 ? 0 : ((value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 0);
 }
 + (void)setMaxOutputTokens:(NSInteger)count {
-    if (count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 8192;
+    if (count != 0 && count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 0;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
 }
 + (NSUInteger)contextLimitChars {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
-    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
+    switch (value) {
+        case 1000000: case 5000000: case 10000000: case 25000000: case 50000000: case 100000000:
+            return (NSUInteger)value;
+        default: return 10000000;
+    }
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
+    switch (count) {
+        case 1000000: case 5000000: case 10000000: case 25000000: case 50000000: case 100000000: break;
+        default: count = 10000000; break;
+    }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
 }
 

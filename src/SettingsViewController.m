@@ -224,7 +224,8 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)outputTokensName {
-    return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
+    NSInteger count = [AppSettings maxOutputTokens];
+    return count <= 0 ? @"Tối đa theo model" : [NSString stringWithFormat:@"%ld tokens", (long)count];
 }
 
 
@@ -259,14 +260,17 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)contextMemoryName {
-    return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
+    NSUInteger chars = [AppSettings contextLimitChars];
+    return [NSString stringWithFormat:@"%lu triệu ký tự", (unsigned long)(chars / 1000000)];
 }
 
 - (void)chooseOutputTokens {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"output_tokens_title")
                                                                    message:L(@"output_tokens_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@2048, @"2,048 tokens"], @[@4096, @"4,096 tokens"], @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"], @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
+    NSArray *options = @[ @[@0, @"Tối đa theo model (không giới hạn riêng trong ứng dụng)"],
+                          @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"],
+                          @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
     __weak typeof(self) weakSelf = self;
     for (NSArray *option in options) {
         NSInteger value = [option[0] integerValue];
@@ -286,9 +290,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
                                                                    message:L(@"context_memory_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
-                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
-                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
+    NSArray *options = @[ @[@1000000, @"1 triệu ký tự"], @[@5000000, @"5 triệu ký tự"],
+                          @[@10000000, @"10 triệu ký tự"], @[@25000000, @"25 triệu ký tự"],
+                          @[@50000000, @"50 triệu ký tự"], @[@100000000, @"100 triệu ký tự"] ];
     __weak typeof(self) weakSelf = self;
     for (NSArray *option in options) {
         NSUInteger value = [option[0] unsignedIntegerValue];

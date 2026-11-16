@@ -1,5 +1,6 @@
 #import "ChatViewController.h"
 #import <WebKit/WebKit.h>
+#import <PhotosUI/PhotosUI.h>
 #import "Strings.h"
 #import "Theme.h"
 #import "KeyStore.h"
@@ -75,7 +76,8 @@ static NSString *ClippedForLog(NSString *text) {
 #pragma mark - ChatViewController
 
 @interface ChatViewController () <WKNavigationDelegate, ScriptMessageTarget, UITextViewDelegate,
-                                  UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate>
+                                  UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate,
+                                  PHPickerViewControllerDelegate>
 @property (strong, nonatomic) WKWebView *webView;
 @property (assign, nonatomic) BOOL webReady;
 @property (copy, nonatomic) NSString *lastWebError;
@@ -84,9 +86,6 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UIScrollView *attachStrip;
 @property (strong, nonatomic) UIView *inputBox;
 @property (strong, nonatomic) UIButton *attachButton;
-@property (strong, nonatomic) UIButton *searchChipButton;
-@property (strong, nonatomic) UIView *toolMenuOverlay;
-@property (strong, nonatomic) UIView *toolMenuCard;
 @property (strong, nonatomic) UIView *toolRow;
 @property (strong, nonatomic) UIButton *reasoningButton;
 @property (strong, nonatomic) UIButton *searchButton;
@@ -277,17 +276,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self.attachButton addTarget:self action:@selector(attachTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.inputBox addSubview:self.attachButton];
 
-    self.searchChipButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.searchChipButton.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
-    self.searchChipButton.layer.cornerRadius = 11;
-    self.searchChipButton.clipsToBounds = YES;
-    self.searchChipButton.backgroundColor = [UIColor colorWithRed:0.10 green:0.48 blue:0.34 alpha:0.18];
-    [self.searchChipButton setTitleColor:[UIColor colorWithRed:0.22 green:0.82 blue:0.60 alpha:1.0] forState:UIControlStateNormal];
-    [self.searchChipButton setTitle:@"⌕ Tìm kiếm   ×" forState:UIControlStateNormal];
-    [self.searchChipButton addTarget:self action:@selector(searchChipTapped) forControlEvents:UIControlEventTouchUpInside];
-    self.searchChipButton.hidden = YES;
-    [self.inputBox addSubview:self.searchChipButton];
-
     self.textView = [[UITextView alloc] init];
     self.textView.backgroundColor = [UIColor clearColor];
     self.textView.font = [UIFont systemFontOfSize:17];
@@ -325,7 +313,6 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat stripHeight = showStrip ? kStripHeight : 0;
 
     CGFloat boxWidth = width - 24;
-    BOOL searchActive = [AppSettings webSearchEnabled];
     CGFloat leftPad = 40;     // room for the attach button
     CGFloat rightPad = 44;    // room for the send button
     CGFloat textWidth = boxWidth - leftPad - rightPad;
@@ -333,9 +320,7 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat textHeight = MIN(MAX(fit, 38), kMaxInputHeight);
     self.textView.scrollEnabled = fit > kMaxInputHeight;
 
-    // Search is shown as a compact removable chip in its own first line of the composer.
-    CGFloat searchRowHeight = searchActive ? 27.0 : 0.0;
-    CGFloat boxHeight = textHeight + 8 + searchRowHeight;
+    CGFloat boxHeight = textHeight + 8;
     CGFloat toolsY = 8 + stripHeight;
     CGFloat boxY = toolsY + kToolsRowHeight + 4;
     CGFloat barHeight = boxY + boxHeight + 8;
@@ -352,10 +337,8 @@ static NSString *ClippedForLog(NSString *text) {
     self.mentionButton.frame = CGRectMake(toolWidth * 3, 0, toolWidth, kToolsRowHeight);
     self.inputBox.frame = CGRectMake(12, boxY, boxWidth, boxHeight);
     self.attachButton.frame = CGRectMake(5, boxHeight - 36 - 5, 36, 36);
-    self.searchChipButton.hidden = !searchActive;
-    if (searchActive) self.searchChipButton.frame = CGRectMake(46, 5, 94, 22);
-    self.textView.frame = CGRectMake(leftPad, searchRowHeight + 4, textWidth, textHeight);
-    self.placeholderLabel.frame = CGRectMake(leftPad + 11, searchRowHeight + 13, textWidth - 12, 20);
+    self.textView.frame = CGRectMake(leftPad, 4, textWidth, textHeight);
+    self.placeholderLabel.frame = CGRectMake(leftPad + 11, 13, textWidth - 12, 20);
     self.sendButton.frame = CGRectMake(boxWidth - 36 - 5, boxHeight - 36 - 5, 36, 36);
     [self updateToolButtons];
 
@@ -397,8 +380,6 @@ static NSString *ClippedForLog(NSString *text) {
     NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"][(NSUInteger)[AppSettings reasoningLevel]];
     [self.reasoningButton setTitle:[NSString stringWithFormat:@"🧠 %@", level] forState:UIControlStateNormal];
     [self.searchButton setTitle:[AppSettings webSearchEnabled] ? @"⌕ Tìm ✓" : @"⌕ Tìm kiếm" forState:UIControlStateNormal];
-    self.searchChipButton.hidden = ![AppSettings webSearchEnabled];
-    [self.searchChipButton setTitle:@"⌕ Tìm kiếm   ×" forState:UIControlStateNormal];
 }
 
 - (void)reasoningTapped {
@@ -513,14 +494,7 @@ static NSString *ClippedForLog(NSString *text) {
 - (void)searchTapped {
     [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
     [self updateToolButtons];
-    [self relayoutAnimated];
-}
-
-- (void)searchChipTapped {
-    if (![AppSettings webSearchEnabled]) return;
-    [AppSettings setWebSearchEnabled:NO];
-    [self updateToolButtons];
-    [self relayoutAnimated];
+    [self showAlertMessage:[AppSettings webSearchEnabled] ? @"Tìm kiếm web đã bật cho các API hỗ trợ công cụ tìm kiếm." : @"Tìm kiếm web đã tắt."];
 }
 
 - (void)fastTapped {
@@ -1189,195 +1163,44 @@ static NSString *ClippedForLog(NSString *text) {
 }
 
 - (void)attachTapped {
-    if (self.streaming || self.toolMenuOverlay) return;
+    if (self.streaming) return;
     [self.view endEditing:YES];
-    if (self.keyboardOverlap <= 0) {
-        [self showToolMenu];
-    } else {
-        __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(260 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-            ChatViewController *me = weakSelf;
-            if (me && !me.streaming) [me showToolMenu];
-        });
+    if ((NSInteger)self.pendingAttachments.count + self.importsInFlight >= kMaxAttachmentsPerMessage) {
+        [self showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
+        return;
     }
-}
 
-- (void)dismissToolMenu {
-    if (!self.toolMenuOverlay) return;
-    [UIView animateWithDuration:0.16 animations:^{
-        self.toolMenuCard.alpha = 0.0;
-        self.toolMenuCard.transform = CGAffineTransformMakeTranslation(0, 12);
-        self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.0];
-    } completion:^(BOOL finished) {
-        [self.toolMenuOverlay removeFromSuperview];
-        self.toolMenuOverlay = nil;
-        self.toolMenuCard = nil;
-    }];
-}
-
-- (void)toolMenuItemTapped:(UIControl *)sender {
-    NSInteger item = sender.tag;
-    [self dismissToolMenu];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"attach_title")
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(190 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
-        ChatViewController *me = weakSelf;
-        if (!me) return;
-        if (item <= 3 && (NSInteger)me.pendingAttachments.count + me.importsInFlight >= kMaxAttachmentsPerMessage) {
-            [me showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
-            return;
-        }
-        switch (item) {
-            case 0: // Photos
-                [DiagnosticLog log:@"attach menu: photos"];
-                [me presentImagePickerWithSource:UIImagePickerControllerSourceTypePhotoLibrary];
-                break;
-            case 1: // Files
-            case 2: // Library browser
-                [DiagnosticLog log:@"attach menu: document picker"];
-                [me presentDocumentPicker];
-                break;
-            case 3: // Camera
-                if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
-                    [DiagnosticLog log:@"attach menu: camera"];
-                    [me presentImagePickerWithSource:UIImagePickerControllerSourceTypeCamera];
-                } else {
-                    [me showAlertMessage:@"Camera không khả dụng trên thiết bị này."];
-                }
-                break;
-            case 4: // Web search
-                [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
-                [me updateToolButtons];
-                [me relayoutAnimated];
-                break;
-            case 5: // Reasoning
-                [me reasoningTapped];
-                break;
-            case 6: // More tools
-                [me mentionTapped];
-                break;
-            case 7: // Image generation command
-                me.textView.text = @"/tạo ảnh ";
-                [me textViewDidChange:me.textView];
-                [me.textView becomeFirstResponder];
-                break;
-            default:
-                break;
-        }
-    });
-}
-
-- (void)addToolMenuRowToCard:(UIView *)card y:(CGFloat)y icon:(NSString *)icon title:(NSString *)title subtitle:(NSString *)subtitle tag:(NSInteger)tag width:(CGFloat)width {
-    UIControl *row = [[UIControl alloc] initWithFrame:CGRectMake(10, y, width - 20, 46)];
-    row.tag = tag;
-    row.layer.cornerRadius = 13;
-    row.backgroundColor = [UIColor clearColor];
-    [row addTarget:self action:@selector(toolMenuItemTapped:) forControlEvents:UIControlEventTouchUpInside];
-
-    UILabel *iconLabel = [[UILabel alloc] initWithFrame:CGRectMake(13, 0, 30, 46)];
-    iconLabel.text = icon;
-    iconLabel.font = [UIFont systemFontOfSize:21];
-    iconLabel.textAlignment = NSTextAlignmentCenter;
-    [row addSubview:iconLabel];
-
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(52, 0, width - 92, 46)];
-    titleLabel.text = title;
-    titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    titleLabel.textColor = [Theme text];
-    [row addSubview:titleLabel];
-
-    if (subtitle.length > 0) {
-        titleLabel.frame = CGRectMake(52, 3, width - 92, 21);
-        UILabel *detail = [[UILabel alloc] initWithFrame:CGRectMake(52, 23, width - 92, 18)];
-        detail.text = subtitle;
-        detail.font = [UIFont systemFontOfSize:11];
-        detail.textColor = [Theme secondaryText];
-        [row addSubview:detail];
+    if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
+        [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_camera") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [DiagnosticLog log:@"attach: camera chosen"];
+            [weakSelf presentImagePickerWithSource:UIImagePickerControllerSourceTypeCamera];
+        }]];
     }
-    [card addSubview:row];
-}
-
-- (void)showToolMenu {
-    if (self.toolMenuOverlay) return;
-    CGFloat width = CGRectGetWidth(self.view.bounds);
-    CGFloat cardWidth = MIN(width - 28.0, 430.0);
-    CGFloat rowHeight = 46.0;
-    BOOL canUseCamera = [UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera];
-    NSArray *items = @[
-        @{@"icon":@"▧", @"title":@"Ảnh", @"subtitle":@"Chọn ảnh từ thư viện", @"tag":@0},
-        @{@"icon":@"⌁", @"title":@"Tệp", @"subtitle":@"PDF, Word, video và tài liệu", @"tag":@1},
-        @{@"icon":@"▣", @"title":@"Thêm từ thư viện", @"subtitle":@"Duyệt các tệp đã lưu", @"tag":@2},
-        @{@"icon":@"◎", @"title":@"Camera", @"subtitle":@"Chụp ảnh mới", @"tag":@3},
-        @{@"icon":@"◉", @"title":@"Tìm kiếm trên mạng", @"subtitle":@"Tìm thông tin mới trên web", @"tag":@4},
-        @{@"icon":@"♧", @"title":@"Suy nghĩ đi", @"subtitle":@"Điều chỉnh mức suy luận", @"tag":@5},
-        @{@"icon":@"✦", @"title":@"Tạo ảnh", @"subtitle":@"Nhập mô tả để tạo ảnh", @"tag":@7},
-        @{@"icon":@"@", @"title":@"Công cụ khác", @"subtitle":@"Tạo tệp và lệnh bổ sung", @"tag":@6}
-    ];
-    CGFloat headerHeight = 42.0;
-    CGFloat cancelHeight = 42.0;
-    NSUInteger visibleItemCount = items.count - (canUseCamera ? 0 : 1);
-    CGFloat cardHeight = headerHeight + rowHeight * visibleItemCount + cancelHeight + 12.0;
-    CGFloat safeTop = 12.0;
-    if (@available(iOS 11.0, *)) safeTop += self.view.safeAreaInsets.top;
-    CGFloat bottomY = CGRectGetMinY(self.inputBar.frame) - 8.0;
-    CGFloat cardY = MAX(safeTop, bottomY - cardHeight);
-    if (cardY + cardHeight > bottomY) cardHeight = MAX(250.0, bottomY - safeTop);
-
-    self.toolMenuOverlay = [[UIView alloc] initWithFrame:self.view.bounds];
-    self.toolMenuOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.0];
-    UIButton *outside = [UIButton buttonWithType:UIButtonTypeCustom];
-    outside.frame = self.toolMenuOverlay.bounds;
-    outside.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [outside addTarget:self action:@selector(dismissToolMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.toolMenuOverlay addSubview:outside];
-
-    self.toolMenuCard = [[UIView alloc] initWithFrame:CGRectMake((width - cardWidth) / 2.0, cardY, cardWidth, cardHeight)];
-    self.toolMenuCard.backgroundColor = [Theme surface];
-    self.toolMenuCard.layer.cornerRadius = 22.0;
-    self.toolMenuCard.layer.borderWidth = 1.0;
-    self.toolMenuCard.layer.borderColor = [Theme border].CGColor;
-    self.toolMenuCard.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.toolMenuCard.layer.shadowOpacity = 0.22;
-    self.toolMenuCard.layer.shadowRadius = 18.0;
-    self.toolMenuCard.layer.shadowOffset = CGSizeMake(0, 6);
-    [self.toolMenuOverlay addSubview:self.toolMenuCard];
-
-    UILabel *heading = [[UILabel alloc] initWithFrame:CGRectMake(18, 8, cardWidth - 36, 30)];
-    heading.text = @"Công cụ";
-    heading.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    heading.textColor = [Theme secondaryText];
-    [self.toolMenuCard addSubview:heading];
-
-    CGFloat y = headerHeight;
-    for (NSDictionary *item in items) {
-        NSInteger tag = [item[@"tag"] integerValue];
-        if (tag == 3 && !canUseCamera) continue;
-        NSString *title = item[@"title"];
-        NSString *subtitle = item[@"subtitle"];
-        if (tag == 4 && [AppSettings webSearchEnabled]) {
-            title = @"Tắt tìm kiếm trên mạng";
-            subtitle = @"Tìm kiếm đang được bật";
-        }
-        [self addToolMenuRowToCard:self.toolMenuCard y:y icon:item[@"icon"] title:title subtitle:subtitle tag:tag width:cardWidth];
-        y += rowHeight;
+    if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypePhotoLibrary]) {
+        [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_photo") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [DiagnosticLog log:@"attach: photo library chosen"];
+            [weakSelf presentPhotoLibraryPicker];
+        }]];
     }
-
-    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
-    cancel.frame = CGRectMake(12, cardHeight - cancelHeight - 2, cardWidth - 24, cancelHeight);
-    [cancel setTitle:L(@"cancel") forState:UIControlStateNormal];
-    cancel.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    [cancel setTitleColor:[Theme accent] forState:UIControlStateNormal];
-    [cancel addTarget:self action:@selector(dismissToolMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.toolMenuCard addSubview:cancel];
-
-    [self.view addSubview:self.toolMenuOverlay];
-    self.toolMenuCard.transform = CGAffineTransformMakeTranslation(0, 12);
-    self.toolMenuCard.alpha = 0.0;
-    [UIView animateWithDuration:0.20 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-        self.toolMenuOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.20];
-        self.toolMenuCard.transform = CGAffineTransformIdentity;
-        self.toolMenuCard.alpha = 1.0;
-    } completion:nil];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"attach_file") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [DiagnosticLog log:@"attach: file picker chosen"];
+        [weakSelf presentDocumentPicker];
+    }]];
+    NSString *searchTitle = [AppSettings webSearchEnabled] ? @"Tìm kiếm trên mạng · Đang bật ✓" : @"Tìm kiếm trên mạng · Đang tắt";
+    [sheet addAction:[UIAlertAction actionWithTitle:searchTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [weakSelf searchTapped];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Mức suy luận AI…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [weakSelf reasoningTapped];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = self.attachButton;
+    sheet.popoverPresentationController.sourceRect = self.attachButton.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)presentImagePickerWithSource:(UIImagePickerControllerSourceType)source {
@@ -1386,6 +1209,59 @@ static NSString *ClippedForLog(NSString *text) {
     picker.mediaTypes = @[@"public.image"];
     picker.delegate = self;
     [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)presentPhotoLibraryPicker {
+    if (@available(iOS 14.0, *)) {
+        NSInteger available = MAX(0, kMaxAttachmentsPerMessage - (NSInteger)self.pendingAttachments.count - self.importsInFlight);
+        if (available == 0) {
+            [self showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
+            return;
+        }
+        PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
+        configuration.filter = PHPickerFilter.imagesFilter;
+        configuration.selectionLimit = available;
+        PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
+        picker.delegate = self;
+        [self presentViewController:picker animated:YES completion:nil];
+    } else {
+        [self presentImagePickerWithSource:UIImagePickerControllerSourceTypePhotoLibrary];
+    }
+}
+
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results API_AVAILABLE(ios(14.0)) {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    if (results.count == 0) return;
+
+    NSString *cid = self.conversation[@"id"];
+    NSInteger available = MAX(0, kMaxAttachmentsPerMessage - (NSInteger)self.pendingAttachments.count - self.importsInFlight);
+    NSUInteger count = MIN(results.count, (NSUInteger)available);
+    if (count == 0) {
+        [self showAlertMessage:[NSString stringWithFormat:L(@"att_err_limit"), (long)kMaxAttachmentsPerMessage]];
+        return;
+    }
+
+    self.importsInFlight += (NSInteger)count; // reserve slots before asynchronous PhotoKit loads finish
+    [self refreshAttachStrip];
+    [self updateSendButton];
+    __weak typeof(self) weakSelf = self;
+    for (NSUInteger index = 0; index < count; index++) {
+        NSItemProvider *provider = results[index].itemProvider;
+        NSString *displayName = provider.suggestedName.length ? provider.suggestedName : [NSString stringWithFormat:@"photo-%lu.jpg", (unsigned long)(index + 1)];
+        [provider loadDataRepresentationForTypeIdentifier:@"public.image" completionHandler:^(NSData *data, NSError *loadError) {
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                NSString *errorKey = nil;
+                NSDictionary *attachment = data.length > 0
+                    ? [AttachmentStore importImageData:data name:displayName conversation:cid errorKey:&errorKey]
+                    : nil;
+                if (!attachment && !errorKey) errorKey = loadError ? @"att_err_unreadable" : @"att_err_empty";
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf finishImport:attachment conversation:cid errorKey:errorKey];
+                });
+            });
+        }];
+    }
+    if (results.count > count) [self showAlertMessage:[NSString stringWithFormat:@"Chỉ nhận tối đa %ld ảnh/tệp trong một tin nhắn.", (long)kMaxAttachmentsPerMessage]];
 }
 
 - (void)presentDocumentPicker {
@@ -1419,10 +1295,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 #pragma mark UIDocumentPickerDelegate
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    for (NSURL *url in urls) {
+    NSInteger available = MAX(0, kMaxAttachmentsPerMessage - (NSInteger)self.pendingAttachments.count - self.importsInFlight);
+    NSUInteger count = MIN(urls.count, (NSUInteger)available);
+    for (NSUInteger index = 0; index < count; index++) {
+        NSURL *url = urls[index];
         [self runImportWithWork:^NSDictionary *(NSString *cid, NSString **errorKey) {
             return [AttachmentStore importDocumentAtURL:url conversation:cid errorKey:errorKey];
         }];
+    }
+    if (urls.count > count) {
+        [self showAlertMessage:[NSString stringWithFormat:@"Chỉ nhận tối đa %ld ảnh/tệp trong một tin nhắn.", (long)kMaxAttachmentsPerMessage]];
     }
 }
 
@@ -1781,11 +1663,23 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             break;
         }
     }
-    NSString *effective = [AppSettings promptText:prompt forQuery:query characterBudget:promptBudget];
-    if ([AppSettings webSearchEnabled]) {
-        effective = [effective stringByAppendingString:@"\n\n[WEB SEARCH MODE] Khi người dùng yêu cầu tìm kiếm trên mạng hoặc hỏi thông tin hiện tại/có thể thay đổi (tin tức, giá, phiên bản, lịch, số liệu, sự kiện), hãy sử dụng công cụ web_search/google_search được cung cấp trước khi kết luận. Nếu công cụ không khả dụng hoặc tìm kiếm thất bại, hãy nói rõ; không giả vờ đã tìm kiếm và không tự bịa nguồn. Với kiến thức ổn định không cần tra cứu, có thể trả lời trực tiếp."];
+    NSString *selectedPrompt = [AppSettings promptText:prompt forQuery:query characterBudget:promptBudget];
+    NSString *lowerQuery = query.lowercaseString ?: @"";
+    NSArray *codingSignals = @[@"code", @"mã nguồn", @"sửa code", @"viết code", @"lập trình", @"objective-c", @"swift", @"theos", @"xcode", @"compile", @"build", @".m", @".h", @".swift", @"c++", @"debug", @"hàm", @"class", @"zip source"];
+    BOOL codingTask = NO;
+    for (NSString *signal in codingSignals) {
+        if ([lowerQuery containsString:signal]) { codingTask = YES; break; }
     }
-    return effective;
+    NSString *responseDirective = @"\n\n[RESPONSE COMPLETENESS] Unless the user explicitly asks for a short answer, answer every part with enough useful detail to act on it. Do not substitute a long outline for the requested explanation, implementation, or deliverable. Include relevant steps, examples, assumptions, and limitations without filler. For technical topics, identify the actual cause before proposing a change; distinguish verified facts from hypotheses. Never claim a search, API action, file edit, or build succeeded unless it actually did.";
+    selectedPrompt = [selectedPrompt stringByAppendingString:responseDirective];
+    if (codingTask) {
+        NSString *codingDirective = @"\n\n[CODING RESPONSE REQUIREMENTS] For a coding, debugging, or source-editing request, deliver implementation rather than an outline alone. Include the complete requested function or changed file sections with all required declarations/imports; do not replace code with ellipses, placeholders, TODOs, or pseudo-code. Do not describe a large architecture while returning only a tiny code fragment. Preserve unrelated behavior and make only requested changes. Check method names, property declarations, types, API payload fields, and error paths for consistency. Explain the exact files and behavior changed, then clearly state anything not build-tested. Prefer complete, compilable, minimal code over an inflated architecture proposal. If the model output limit is reached, say which exact file/section remains instead of claiming the work is complete.";
+        selectedPrompt = [selectedPrompt stringByAppendingString:codingDirective];
+    }
+    if ([AppSettings webSearchEnabled]) {
+        selectedPrompt = [selectedPrompt stringByAppendingString:@"\n\n[WEB SEARCH ENABLED] A real provider-managed web search tool is attached to this request. When the user explicitly asks to search, or the answer depends on current, recent, external, or verifiable information, you MUST invoke the search tool before answering and base factual claims on the returned results. Do not claim to have searched unless the API actually returned results. If the selected model/provider rejects or does not support the tool, state that limitation plainly instead of pretending the search happened." ];
+    }
+    return selectedPrompt;
 }
 
 // Counts only: never the text itself.
@@ -1865,13 +1759,28 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
     AIProvider currentProvider = [Provider forModelId:self.model];
-    BOOL largeClaudeReply = currentProvider == AIProviderClaude && [AppSettings maxOutputTokens] > 21333;
+    NSInteger claudeModelOutputCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
+    NSInteger configuredOutputCap = [AppSettings maxOutputTokens];
+    BOOL largeClaudeReply = currentProvider == AIProviderClaude &&
+        (configuredOutputCap > 21333 || (configuredOutputCap == 0 && claudeModelOutputCap > 21333));
 
-    // A Fast-mode 429/529 can be caused by the separate premium speed pool. Retry once
-    // at standard speed before consuming the general server-retry budget.
+    // Classify permanent daily/billing quota errors before fallback so Fast mode
+    // cannot trigger an unnecessary second request when the account is blocked.
+    NSString *lowerDetail = detail.lowercaseString ?: @"";
+    BOOL permanentQuota = status == 429 &&
+        ([lowerDetail containsString:@"per day"] || [lowerDetail containsString:@"per_day"] ||
+         [lowerDetail containsString:@"perday"] || [lowerDetail containsString:@"daily quota"] ||
+         [lowerDetail containsString:@"per month"] || [lowerDetail containsString:@"per_month"] ||
+         [lowerDetail containsString:@"monthly quota"] || [lowerDetail containsString:@"insufficient_quota"] ||
+         [lowerDetail containsString:@"billing"] || [lowerDetail containsString:@"spend limit"] ||
+         [lowerDetail containsString:@"spend cap"] || [lowerDetail containsString:@"usage limit"] ||
+         [lowerDetail containsString:@"payment"] || [lowerDetail containsString:@"quota_exceeded"]);
+
+    // A Fast-mode 429/529 can be caused by the separate speed pool. Retry once
+    // at standard speed only for transient Fast capacity errors, never for a daily/spend cap.
     BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
-    NSString *fastErrorText = [detail lowercaseString] ?: @"";
-    BOOL fastRateLimited = wasFastRequest && (status == 429 || status == 529);
+    NSString *fastErrorText = lowerDetail;
+    BOOL fastRateLimited = wasFastRequest && !permanentQuota && (status == 429 || status == 529);
     BOOL fastRejected = wasFastRequest && (status == 400 || status == 403) &&
                         ([fastErrorText containsString:@"fast"] || [fastErrorText containsString:@"speed"]);
     if ((fastRateLimited || fastRejected) && partial.length == 0 &&
@@ -1887,7 +1796,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         [DiagnosticLog log:fastRateLimited
             ? @"Claude Fast mode capacity unavailable; retrying once at standard speed"
             : @"Claude Fast mode rejected by model/account; retrying once at standard speed and disabling Fast mode"];
-        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(1.0, MIN(60.0, fastRetryAfter)) : 1.0;
+        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(1.0, MIN(900.0, fastRetryAfter)) : 1.0;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fallbackDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
@@ -1898,15 +1807,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     // backoff only before any content arrives, so a partial answer is never duplicated.
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    if (transientServer && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < 3) {
+    NSInteger retryLimit = status == 429 ? 1 : 3;
+    if (transientServer && !permanentQuota && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < retryLimit) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0);
-        NSTimeInterval delay = MAX(backoff, MIN(60.0, providerDelay));
+        NSTimeInterval backoff = status == 429 ? 8.0 : (self.streamRetryCount == 1 ? 2.0 : (self.streamRetryCount == 2 ? 5.0 : 10.0));
+        NSTimeInterval delay = MAX(backoff, MIN(900.0, providerDelay));
         [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+            if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
         return;
     }
@@ -1968,7 +1878,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             self.streamRetryCount++;
             [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (self.streaming && self.stream == nil) [self launchRequestStreaming:YES];
+                if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
             });
             return;
         }
@@ -2084,7 +1994,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         case GeminiStreamErrorInvalidKey:       base = L(@"err_invalid_key"); break;
         case GeminiStreamErrorPermissionDenied: base = L(@"err_permission"); showDetail = YES; break;
         case GeminiStreamErrorModelNotFound:    base = L(@"err_model_not_found"); break;
-        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); break;
+        case GeminiStreamErrorRateLimited:      base = L(@"err_rate"); showDetail = YES; break;
         case GeminiStreamErrorNetwork:          base = L(@"err_network"); showDetail = YES; break;
         case GeminiStreamErrorBlocked:          base = L(@"err_blocked"); break;
         case GeminiStreamErrorEmptyReply:       base = L(@"err_empty_reply"); break;
