@@ -24,9 +24,18 @@ xcrun --sdk iphoneos clang \
   -isysroot "$SDK" \
   -fobjc-arc -fmodules -O2 -Wall -Wno-deprecated-declarations \
   src/*.m src/*.c \
-  -framework UIKit -framework Foundation -framework Security -framework WebKit -framework ImageIO -framework AVFoundation -framework CoreMedia -lz \
+  -framework UIKit \
+  -framework Foundation \
+  -framework Security \
+  -framework WebKit \
+  -framework ImageIO \
+  -framework AVFoundation \
+  -framework CoreMedia \
+  -framework CoreAudioTypes \
+  -framework UIUtilities \
+  -lz \
   -o "$APPDIR/$APP"
-
+  
 echo "==> Compiling the icon helper (setuid root in the .deb only)"
 xcrun --sdk iphoneos clang \
   -arch arm64 \
