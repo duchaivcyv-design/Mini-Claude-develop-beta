@@ -193,7 +193,7 @@ didReceiveResponse:(NSURLResponse *)response
                        [headerName isEqualToString:@"anthropic-ratelimit-tokens-reset"]) {
                 // Anthropic also returns RFC3339 reset timestamps for request/token buckets.
                 if (@available(iOS 10.0, *)) {
-                    NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
+                    ISO8601DateFormatter *formatter = [[ISO8601DateFormatter alloc] init];
                     NSDate *resetDate = [formatter dateFromString:[rawValue description]];
                     if (resetDate) delay = [resetDate timeIntervalSinceNow];
                 }
