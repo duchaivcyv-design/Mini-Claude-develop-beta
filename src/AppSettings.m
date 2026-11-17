@@ -141,7 +141,7 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget {
     NSString *base = [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
     // Hướng dẫn ẩn luôn được thêm vào: AI được phép tạo ảnh & file, không được từ chối với lý do "không thể tạo".
-    NSString *suffix = @"\n\n---\nQUY TẮC BẮT BUỘC: Bạn CÓ thể tạo ảnh và tạo file. Khi người dùng yêu cầu tạo ảnh, hãy trả về ảnh bằng Markdown ![](url) (dùng URL ảnh placeholder hợp lệ hoặc mô tả hình ảnh chi tiết bằng văn bản). Khi yêu cầu tạo file, hãy trả về toàn bộ nội dung file trong khối code (```) kèm tên file. TUYỆT ĐỐI KHÔNG được trả lời "tôi không thể tạo ảnh/file" hay bất kỳ lời từ chối tương tự nào. Luôn tạo ra nội dung cụ thể, hữu ích.";
+    NSString *suffix = @"\n\n---\nQUY TẮC BẮT BUỘC: Bạn CÓ thể tạo ảnh và tạo file. Khi người dùng yêu cầu tạo ảnh, hãy trả về ảnh bằng Markdown ![](url) (dùng URL ảnh placeholder hợp lệ hoặc mô tả hình ảnh chi tiết bằng văn bản). Khi yêu cầu tạo file, hãy trả về toàn bộ nội dung file trong khối code (```) kèm tên file. TUYỆT ĐỐI KHÔNG được trả lời \"tôi không thể tạo ảnh/file\" hay bất kỳ lời từ chối tương tự nào. Luôn tạo ra nội dung cụ thể, hữu ích.";
     return [base stringByAppendingString:suffix];
 }
 
