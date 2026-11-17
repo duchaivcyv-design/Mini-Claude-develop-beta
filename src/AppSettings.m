@@ -139,7 +139,10 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 // Keep the full 1M-character instruction file locally, but send only relevant excerpts
 // that fit the selected model's input window. This avoids oversized requests and 503s.
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget {
-    return [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
+    NSString *base = [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
+    // Hướng dẫn ẩn luôn được thêm vào: AI được phép tạo ảnh & file, không được từ chối với lý do "không thể tạo".
+    NSString *suffix = @"\n\n---\nQUY TẮC BẮT BUỘC: Bạn CÓ thể tạo ảnh và tạo file. Khi người dùng yêu cầu tạo ảnh, hãy trả về ảnh bằng Markdown ![](url) (dùng URL ảnh placeholder hợp lệ hoặc mô tả hình ảnh chi tiết bằng văn bản). Khi yêu cầu tạo file, hãy trả về toàn bộ nội dung file trong khối code (```) kèm tên file. TUYỆT ĐỐI KHÔNG được trả lời "tôi không thể tạo ảnh/file" hay bất kỳ lời từ chối tương tự nào. Luôn tạo ra nội dung cụ thể, hữu ích.";
+    return [base stringByAppendingString:suffix];
 }
 
 + (NSString *)promptText:(NSString *)prompt forQuery:(NSString *)query characterBudget:(NSUInteger)budget {
@@ -238,34 +241,58 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
 + (NSInteger)maxOutputTokens {
+    // Zero means: do not impose an app-side output cap; use the selected model's published API limit.
+    // The provider limit still applies and is enforced in GeminiStream / ClaudeStream.
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
-    return (value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 8192;
+    return value == 0 ? 0 : ((value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 0);
 }
 + (void)setMaxOutputTokens:(NSInteger)count {
-    if (count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 8192;
+    if (count != 0 && count != 2048 && count != 4096 && count != 8192 && count != 16384 && count != 32768 && count != 65536 && count != 128000) count = 0;
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kMaxOutputTokensKey];
 }
 + (NSUInteger)contextLimitChars {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kContextLimitCharsKey];
-    return (value == 200000 || value == 400000 || value == 600000) ? (NSUInteger)value : 400000;
+    switch (value) {
+        case 1000000: case 5000000: case 10000000: case 25000000: case 50000000: case 100000000:
+            return (NSUInteger)value;
+        default: return 10000000;
+    }
 }
 + (void)setContextLimitChars:(NSUInteger)count {
-    if (count != 200000 && count != 400000 && count != 600000) count = 400000;
+    switch (count) {
+        case 1000000: case 5000000: case 10000000: case 25000000: case 50000000: case 100000000: break;
+        default: count = 10000000; break;
+    }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)count forKey:kContextLimitCharsKey];
 }
 
 + (AIReasoningLevel)reasoningLevel {
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kReasoningLevelKey];
-    return (value >= AIReasoningLevelLow && value <= AIReasoningLevelMax) ? (AIReasoningLevel)value : AIReasoningLevelMedium;
+    return (value >= AIReasoningLevelLow && value <= AIReasoningLevelMax) ? (AIReasoningLevel)value : AIReasoningLevelHigh;
 }
 + (void)setReasoningLevel:(AIReasoningLevel)level {
-    if (level < AIReasoningLevelLow || level > AIReasoningLevelMax) level = AIReasoningLevelMedium;
+    if (level < AIReasoningLevelLow || level > AIReasoningLevelMax) level = AIReasoningLevelHigh;
     [[NSUserDefaults standardUserDefaults] setInteger:level forKey:kReasoningLevelKey];
 }
 + (BOOL)fastModeEnabled { return [[NSUserDefaults standardUserDefaults] boolForKey:kFastModeKey]; }
 + (void)setFastModeEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kFastModeKey]; }
 + (BOOL)webSearchEnabled { return [[NSUserDefaults standardUserDefaults] boolForKey:kWebSearchKey]; }
 + (void)setWebSearchEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWebSearchKey]; }
+
+static NSString *const kUiScaleKey = @"uiScale";
++ (CGFloat)uiScale {
+    double v = [[NSUserDefaults standardUserDefaults] doubleForKey:kUiScaleKey];
+    if (v < 0.7 || v > 1.4) v = 1.0;
+    return (CGFloat)v;
+}
++ (void)setUiScale:(CGFloat)scale {
+    if (scale < 0.7) scale = 0.7; if (scale > 1.4) scale = 1.4;
+    [[NSUserDefaults standardUserDefaults] setDouble:(double)scale forKey:kUiScaleKey];
+}
+
+static NSString *const kVoiceAutoPlayKey = @"voiceAutoPlay";
++ (BOOL)voiceAutoPlayEnabled { id v = [[NSUserDefaults standardUserDefaults] objectForKey:kVoiceAutoPlayKey]; return v ? [v boolValue] : YES; }
++ (void)setVoiceAutoPlayEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kVoiceAutoPlayKey]; }
 
 + (long long)dailyTokenUsage {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];

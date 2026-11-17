@@ -5,10 +5,10 @@
 #import <math.h>
 #import "OfficeText.h"
 
-const NSInteger  kMaxAttachmentsPerMessage = 6;
+const NSInteger  kMaxAttachmentsPerMessage = 25;
 const NSUInteger kMaxInlineBytesPerMessage = 13 * 1024 * 1024;   // base64 adds a third: ~17.4 MB of the 20 MB request cap
 
-static const CGFloat    kImageMaxSide      = 2048;                 // Gemini scales anything larger down anyway
+static const CGFloat    kImageMaxSide      = 1440;                 // Gemini scales anything larger down anyway
 static const CGFloat    kThumbMaxSide      = 160;
 static const NSUInteger kMaxPDFBytes       = 10 * 1024 * 1024;
 static const NSUInteger kMaxOfficeBytes    = 15 * 1024 * 1024;     // .docx / .pptx archive size
@@ -17,7 +17,8 @@ static const NSUInteger kMaxImageFileBytes = 40 * 1024 * 1024;
 static const unsigned long long kMaxVideoFileBytes = 100ULL * 1024ULL * 1024ULL;
 static const NSTimeInterval kMaxVideoDuration = 120.0;
 static const NSUInteger kMaxVideoFrames = 6;
-static const NSUInteger kMaxTextChars      = 200000;
+static const NSUInteger kMaxTextChars      = 4 * 1024 * 1024;
+static const unsigned long long kMaxZipFileBytes = 200ULL * 1024ULL * 1024ULL;
 
 static NSString *RootDir(void) {
     static NSString *dir = nil;
@@ -136,7 +137,7 @@ static BOOL SafeComponent(id value) {
     UIImage *image = [UIImage imageWithCGImage:cgImage];
     CGImageRelease(cgImage);
 
-    NSData *jpeg = [self jpegFromImage:image maxSide:kImageMaxSide quality:0.8];
+    NSData *jpeg = [self jpegFromImage:image maxSide:kImageMaxSide quality:0.70];
     NSData *thumb = [self jpegFromImage:image maxSide:kThumbMaxSide quality:0.7];
     if (jpeg.length == 0 || thumb.length == 0) { if (errorKey) *errorKey = @"att_err_unreadable"; return nil; }
 
@@ -161,7 +162,7 @@ static BOOL SafeComponent(id value) {
 // Formats Gemini cannot read and that we cannot unpack either: better to say so than to send garbage.
 + (NSSet *)unsupportedExtensions {
     return [NSSet setWithObjects:@"doc", @"xls", @"xlsx", @"ppt", @"odt", @"ods", @"odp", @"pages", @"numbers", @"key", @"rtf",
-            @"zip", @"rar", @"7z", @"mp3", @"m4a", @"wav", @"avi", @"exe", @"dmg", @"ipa", @"deb", nil];
+            @"rar", @"7z", @"mp3", @"m4a", @"wav", @"avi", @"exe", @"dmg", @"ipa", @"deb", nil];
 }
 
 + (NSString *)decodeText:(NSData *)data {
@@ -272,6 +273,15 @@ static BOOL SafeComponent(id value) {
     NSString *ext = name.pathExtension.lowercaseString;
 
     BOOL scoped = [url startAccessingSecurityScopedResource];
+    if ([ext isEqualToString:@"zip"]) {
+        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:nil];
+        unsigned long long zipBytes = [attributes[NSFileSize] unsignedLongLongValue];
+        if (zipBytes > kMaxZipFileBytes) {
+            if (scoped) [url stopAccessingSecurityScopedResource];
+            if (errorKey) *errorKey = @"att_err_too_large";
+            return nil;
+        }
+    }
     if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
         NSDictionary *video = [self importVideoAtURL:url conversation:conversationId errorKey:errorKey];
         if (scoped) [url stopAccessingSecurityScopedResource];
@@ -307,6 +317,22 @@ static BOOL SafeComponent(id value) {
     if ([ext isEqualToString:@"docx"] || [ext isEqualToString:@"pptx"]) {
         if (data.length > kMaxOfficeBytes) { if (errorKey) *errorKey = @"att_err_too_large"; return nil; }
         return [self importOffice:data isPPTX:[ext isEqualToString:@"pptx"] name:name conversation:conversationId errorKey:errorKey];
+    }
+
+    if ([ext isEqualToString:@"zip"]) {
+        if (data.length > kMaxZipFileBytes) { if (errorKey) *errorKey = @"att_err_too_large"; return nil; }
+        int zipError = OFFICE_OK;
+        char *rawText = office_zip_text(data.bytes, data.length, &zipError);
+        NSString *archiveText = rawText ? [NSString stringWithUTF8String:rawText] : nil;
+        if (rawText) free(rawText);
+        // ZIP luôn gửi được: nếu trích xuất văn bản được thì gửi nội dung, nếu không (nhị phân/đã mã hóa)
+        // thì gửi manifest tên + dung lượng để AI biết có file này. Không bao giờ báo lỗi.
+        if (archiveText.length == 0) {
+            NSString *sizeStr = [NSByteCountFormatter stringFromByteCount:data.length countStyle:NSByteCountFormatterCountStyleFile];
+            archiveText = [NSString stringWithFormat:@"[Tệp ZIP đính kèm]\nTên: %@\nDung lượng: %@\nLưu ý: archive chứa nội dung nhị phân hoặc đã mã hóa, không trích xuất được văn bản. Người dùng đã gửi file này đính kèm.", name, sizeStr];
+        }
+        return [self saveText:archiveText name:[NSString stringWithFormat:@"%@ (nội dung ZIP)", name]
+                 conversation:conversationId errorKey:errorKey];
     }
 
     if ([[self unsupportedExtensions] containsObject:ext]) {

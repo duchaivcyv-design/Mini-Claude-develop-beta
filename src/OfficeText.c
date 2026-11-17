@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <strings.h>
 #include <zlib.h>
 
 #define MAX_PART_BYTES (40u * 1024u * 1024u)   // largest uncompressed XML part we will inflate
@@ -532,6 +533,166 @@ static char *finish(sb_t *sb, int *err) {
     }
     tidy(sb);
     return sb->p;
+}
+
+
+/* ------------------------------------------------------------------------------------------------
+ * General source/text ZIP extraction. We never write archive paths to disk: selected text entries
+ * are read directly from the in-memory archive. Limits defend against ZIP bombs and huge repos.
+ * ------------------------------------------------------------------------------------------------ */
+
+static int zip_name_contains(const unsigned char *name, size_t length, const char *needle) {
+    size_t needleLen = strlen(needle);
+    if (!needleLen || needleLen > length) return 0;
+    for (size_t i = 0; i + needleLen <= length; i++) {
+        if (memcmp(name + i, needle, needleLen) == 0) return 1;
+    }
+    return 0;
+}
+
+static int zip_name_is_text(const unsigned char *name, size_t length) {
+    if (!name || length == 0) return 0;
+    if (name[length - 1] == '/') return 0;
+    /* Ignore hidden metadata / dependency trees that add noise and can dominate the archive. */
+    if (zip_name_contains(name, length, "/.git/") || zip_name_contains(name, length, "/node_modules/") ||
+        zip_name_contains(name, length, "/Pods/") || zip_name_contains(name, length, "/.svn/") ||
+        (length >= 5 && memcmp(name, ".git/", 5) == 0) ||
+        (length >= 13 && memcmp(name, "node_modules/", 13) == 0) ||
+        (length >= 5 && memcmp(name, "Pods/", 5) == 0) ||
+        (length >= 5 && memcmp(name, ".svn/", 5) == 0)) return 0;
+    size_t base = 0;
+    for (size_t i = 0; i < length; i++) if (name[i] == '/') base = i + 1;
+    size_t dot = length;
+    for (size_t i = base; i < length; i++) if (name[i] == '.') dot = i + 1;
+    if (dot >= length) {
+        char basename[32];
+        size_t baseLen = length - base;
+        if (baseLen == 0 || baseLen >= sizeof basename) return 0;
+        for (size_t i = 0; i < baseLen; i++) {
+            unsigned char c = name[base + i];
+            basename[i] = (char)((c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c);
+        }
+        basename[baseLen] = 0;
+        return strcmp(basename, "dockerfile") == 0 || strcmp(basename, "makefile") == 0 ||
+               strcmp(basename, "license") == 0 || strcmp(basename, "readme") == 0 ||
+               strcmp(basename, "notice") == 0 || strcmp(basename, "gemfile") == 0 ||
+               strcmp(basename, "rakefile") == 0 || strcmp(basename, "procfile") == 0;
+    }
+    char ext[16];
+    size_t extLen = length - dot;
+    if (extLen == 0 || extLen >= sizeof ext) return 0;
+    for (size_t i = 0; i < extLen; i++) {
+        unsigned char c = name[dot + i];
+        ext[i] = (char)((c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c);
+    }
+    ext[extLen] = 0;
+    static const char *allowed[] = {
+        "txt","md","markdown","rst","text","json","jsonl","csv","tsv","xml","html","htm",
+        "css","scss","less","js","jsx","ts","tsx","mjs","cjs","m","h","mm","hpp","hh",
+        "cc","cpp","cxx","swift","py","pyi","java","kt","kts","go","rs","rb","php",
+        "sh","bash","zsh","fish","yml","yaml","toml","ini","cfg","conf","plist","sql",
+        "log","gradle","properties","env","gitignore","dockerfile","makefile","cmake","vue","svelte",
+        "dart","lua","r","ipynb","patch","diff","proto","graphql","gql","tf","hcl","bat","ps1",
+        "cs","fs","vb","scala","sc","pl","pm","ex","exs","erl","hrl","clj","cljs","cljc","edn"
+    };
+    for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++) {
+        if (strcmp(ext, allowed[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int zip_bytes_are_text_utf8(const unsigned char *bytes, size_t length) {
+    if (!bytes || length == 0) return 0;
+    size_t i = 0;
+    while (i < length) {
+        unsigned char c = bytes[i++];
+        if (c == 0 || (c < 0x09) || (c > 0x0D && c < 0x20)) return 0;
+        if (c < 0x80) continue;
+        unsigned need = (c >= 0xC2 && c <= 0xDF) ? 1 :
+                        (c >= 0xE0 && c <= 0xEF) ? 2 :
+                        (c >= 0xF0 && c <= 0xF4) ? 3 : 99;
+        if (need == 99 || i + need > length) return 0;
+        unsigned char first = bytes[i];
+        if ((c == 0xE0 && first < 0xA0) || (c == 0xED && first >= 0xA0) ||
+            (c == 0xF0 && first < 0x90) || (c == 0xF4 && first >= 0x90)) return 0;
+        for (unsigned j = 0; j < need; j++) if ((bytes[i + j] & 0xC0) != 0x80) return 0;
+        i += need;
+    }
+    return 1;
+}
+
+char *office_zip_text(const unsigned char *zip, size_t zipLen, int *err) {
+    int dummy;
+    if (!err) err = &dummy;
+    *err = OFFICE_OK;
+    if (!zip || zipLen < 22) { *err = OFFICE_ERR_NOT_ZIP; return NULL; }
+
+    long long minPos = (long long)zipLen - 22 - 65535;
+    if (minPos < 0) minPos = 0;
+    long long eocd = -1;
+    for (long long i = (long long)zipLen - 22; i >= minPos; i--) {
+        if (rd32(zip + i) == 0x06054b50u) { eocd = i; break; }
+    }
+    if (eocd < 0) { *err = OFFICE_ERR_NOT_ZIP; return NULL; }
+
+    uint32_t total = rd16(zip + eocd + 10);
+    uint32_t cdSize = rd32(zip + eocd + 12);
+    uint32_t cdOff = rd32(zip + eocd + 16);
+    if (total == 0xFFFFu || cdSize == 0xFFFFFFFFu || cdOff == 0xFFFFFFFFu) {
+        *err = OFFICE_ERR_UNSUPPORTED; return NULL;
+    }
+    if (total > 10000 || (uint64_t)cdOff + cdSize > zipLen) { *err = OFFICE_ERR_NOT_ZIP; return NULL; }
+
+    sb_t output = {0};
+    const unsigned char *cursor = zip + cdOff;
+    const unsigned char *end = cursor + cdSize;
+    int sawOversizedText = 0;
+    for (uint32_t index = 0; index < total; index++) {
+        if ((size_t)(end - cursor) < 46 || rd32(cursor) != 0x02014b50u) {
+            free(output.p); *err = OFFICE_ERR_NOT_ZIP; return NULL;
+        }
+        uint16_t flags = rd16(cursor + 8);
+        uint16_t nameLen = rd16(cursor + 28);
+        uint16_t extraLen = rd16(cursor + 30);
+        uint16_t commentLen = rd16(cursor + 32);
+        if ((size_t)(end - cursor) < (size_t)46 + nameLen + extraLen + commentLen) {
+            free(output.p); *err = OFFICE_ERR_NOT_ZIP; return NULL;
+        }
+        uint32_t usize = rd32(cursor + 24);
+        uint32_t csize = rd32(cursor + 20);
+        uint32_t lho = rd32(cursor + 42);
+        const unsigned char *name = cursor + 46;
+        int textName = zip_name_is_text(name, nameLen);
+        if (textName && usize > MAX_TEXT_BYTES) sawOversizedText = 1;
+        int selected = !(flags & 1) && usize > 0 && usize <= MAX_TEXT_BYTES &&
+                       csize != 0xFFFFFFFFu && usize != 0xFFFFFFFFu && lho != 0xFFFFFFFFu && textName;
+        if (selected && output.len < MAX_TEXT_BYTES) {
+            zip_entry entry;
+            entry.method = rd16(cursor + 10);
+            entry.csize = csize;
+            entry.usize = usize;
+            entry.lho = lho;
+            unsigned char *contents = NULL;
+            size_t contentsLen = 0;
+            int readResult = read_entry(zip, zipLen, &entry, &contents, &contentsLen);
+            if (readResult == OFFICE_OK && zip_bytes_are_text_utf8(contents, contentsLen)) {
+                sb_put(&output, "\n\n===== ", sizeof("\n\n===== ") - 1);
+                sb_put(&output, (const char *)name, nameLen);
+                sb_put(&output, " =====\n", sizeof(" =====\n") - 1);
+                sb_put(&output, (const char *)contents, contentsLen);
+            }
+            free(contents);
+        }
+        cursor += (size_t)46 + nameLen + extraLen + commentLen;
+        if (output.overflow) break;
+    }
+    if (output.len == 0) {
+        free(output.p);
+        *err = sawOversizedText ? OFFICE_ERR_TOO_LARGE : OFFICE_ERR_MISSING_PART;
+        return NULL;
+    }
+    if (output.overflow) { output.overflow = 0; sb_put(&output, "\n[ZIP text truncated at the safe extraction limit.]\n", sizeof("\n[ZIP text truncated at the safe extraction limit.]\n") - 1); }
+    return finish(&output, err);
 }
 
 char *office_docx_text(const unsigned char *zip, size_t zipLen, int *err) {

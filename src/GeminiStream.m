@@ -73,22 +73,25 @@
 
     NSInteger requestedOutputTokens = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderGemini];
-    // Older cached model lists may not include token metadata yet; stay conservative until the list refreshes.
+    // If model metadata is unavailable, use a conservative fallback rather than sending an invalid huge value.
     if (modelCap <= 0) modelCap = 8192;
+    // A zero setting means the app does not impose a separate limit: defer to the model's reported cap.
+    NSInteger outputCeiling = requestedOutputTokens > 0 ? MIN(requestedOutputTokens, modelCap) : modelCap;
     NSString *lowerModel = self.model.lowercaseString;
     AIReasoningLevel reasoning = [AppSettings reasoningLevel];
 
     NSMutableDictionary *generationConfig = [NSMutableDictionary dictionary];
-    // maxOutputTokens includes hidden reasoning tokens. Keep an answer reserve and
-    // clamp the reasoning budget to the model's true output ceiling to avoid invalid
-    // requests (a common source of 400s on older cached model metadata).
+    // maxOutputTokens includes hidden reasoning tokens. Always expose the model's
+    // full published output ceiling to generation; reserve only a small answer floor
+    // when setting the explicit Gemini 2.5 thinking budget. The previous 2/3 split
+    // silently reduced normal answer length even when the user selected model maximum.
     BOOL supportsThinking = [lowerModel containsString:@"gemini-2.5"] ||
                             [lowerModel containsString:@"gemini-3"] ||
                             [lowerModel containsString:@"gemini-4"];
     NSInteger answerReserve = supportsThinking
-        ? MIN(requestedOutputTokens, MAX(1024, (modelCap * 2) / 3))
-        : MIN(requestedOutputTokens, modelCap);
-    NSInteger availableThinking = supportsThinking ? MAX(0, modelCap - answerReserve) : 0;
+        ? MIN(outputCeiling, MAX(1024, (outputCeiling * 2) / 3))
+        : outputCeiling;
+    NSInteger availableThinking = supportsThinking ? MAX(0, outputCeiling - answerReserve) : 0;
     NSInteger thinkingBudget = 0;
     // Gemini 3 uses lowercase thinkingLevel values. Gemini 2.5 uses explicit budgets.
     // Keep model-specific documented ranges: Pro up to 32,768; Flash variants up to 24,576.
@@ -115,15 +118,9 @@
         }
     }
 
-    NSInteger reasoningHeadroom = thinkingBudget;
-    if ([lowerModel containsString:@"gemini-3"] || [lowerModel containsString:@"gemini-4"]) {
-        NSInteger desiredHeadroom = reasoning >= AIReasoningLevelMax ? 16384 :
-                                    (reasoning >= AIReasoningLevelVeryHigh ? 12288 :
-                                     (reasoning >= AIReasoningLevelHigh ? 8192 : 2048));
-        reasoningHeadroom = MIN(desiredHeadroom, availableThinking);
-    }
-    NSInteger outputTokens = MIN(modelCap, answerReserve + reasoningHeadroom);
-    generationConfig[@"maxOutputTokens"] = @(MAX(1, outputTokens));
+    // The thinking level affects internal reasoning, not a separate app-side
+    // response cap. Keep maxOutputTokens at the selected model's real maximum.
+    generationConfig[@"maxOutputTokens"] = @(MAX(1, outputCeiling));
 
     // Gemini image-generation models require both text and image response modalities.
     if ([lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"]) {

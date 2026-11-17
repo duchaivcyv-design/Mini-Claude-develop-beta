@@ -1,4 +1,5 @@
 #import "AppearanceViewController.h"
+#import "AppSettings.h"
 #import "Strings.h"
 #import "Theme.h"
 #import "DiagnosticLog.h"
@@ -7,6 +8,7 @@ typedef NS_ENUM(NSInteger, AppearanceSection) {
     AppearanceSectionMode = 0,    // light / dark pictures + "Tự động"
     AppearanceSectionSkin,
     AppearanceSectionWallpaper,
+    AppearanceSectionTextScale,   // thu nho / phong to chu & giao dien
     AppearanceSectionIcon,
     AppearanceSectionCount
 };
@@ -245,6 +247,7 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionSkin:      return ThemeSkinCount;
         case AppearanceSectionMode:      return 2;   // picture row + "Tự động"
         case AppearanceSectionWallpaper: return kWallpaperRowCount;
+        case AppearanceSectionTextScale: return 1;
         default:                         return ThemeSkinCount;   // icons: default + one per skin
     }
 }
@@ -254,6 +257,7 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionMode:      return L(@"appearance_mode_header");
         case AppearanceSectionSkin:      return L(@"appearance_skin_header");
         case AppearanceSectionWallpaper: return L(@"appearance_wallpaper_header");
+        case AppearanceSectionTextScale: return @"Co chu & giao dien";
         case AppearanceSectionIcon:      return L(@"appearance_icon_header");
         default:                         return nil;
     }
@@ -338,6 +342,15 @@ static NSCache *ImageCache(void) {
             cell.accessoryType = isSelected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
         }
+        case AppearanceSectionTextScale: {
+            CGFloat sc = [AppSettings uiScale];
+            NSString *name = (sc <= 0.86) ? @"Nho" : (sc <= 0.96) ? @"Vua nho" : (sc <= 1.04) ? @"Mac dinh" : (sc <= 1.18) ? @"Lon" : @"Rat lon";
+            cell.textLabel.text = [NSString stringWithFormat:@"Co chu: %@ (%.2fx)", name, sc];
+            cell.detailTextLabel.text = @"Cham de thay doi — tu dong khop man hinh dien thoai";
+            cell.imageView.image = nil;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
         default: {
             ThemeSkin skin = (ThemeSkin)indexPath.row;
             cell.imageView.image = [self cachedIconForSkin:skin];
@@ -385,6 +398,19 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionIcon:
             [self changeIconToSkin:(ThemeSkin)indexPath.row];
             break;
+        case AppearanceSectionTextScale: {
+            NSArray *levels = @[@0.85, @0.92, @1.0, @1.08, @1.15];
+            CGFloat cur = [AppSettings uiScale];
+            NSUInteger idx = levels.count - 1;
+            for (NSUInteger i = 0; i < levels.count; i++) {
+                if (fabs([levels[i] doubleValue] - cur) < 0.01) { idx = i; break; }
+            }
+            CGFloat next = [levels[(idx + 1) % levels.count] doubleValue];
+            [AppSettings setUiScale:next];
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"UIScaleDidChangeNotification" object:nil];
+            [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+            break;
+        }
         default:
             break;
     }
