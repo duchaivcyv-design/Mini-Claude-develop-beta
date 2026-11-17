@@ -1,55 +1,51 @@
-# ClaudeMini 0.7.0 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
+# ClaudeMini 0.7.1 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
 
-## Mới: Skin, chế độ tối, nền chat, đổi icon
-Cài đặt › **Giao diện** (màn Lịch sử › Cài đặt › Giao diện). Đổi xong áp dụng ngay, cuộc trò chuyện đang mở được giữ nguyên.
-- **7 skin**: Claude (mặc định, giữ nguyên giao diện cũ) và 6 skin màu: **SideStore Skin** (tím), **LiveContainer Skin** (xanh biển), **Dopamine Skin** (xanh lá), **Chimera Skin** (trắng), **Sileo Skin** (xanh lam), **Github Skin** (đỏ). Mỗi skin có màu chủ đạo, ảnh nền chat và icon riêng.
-- **Sáng / Tối / Tự động** (như màn Hiển thị của iOS): hai ảnh xem trước theo đúng skin đang chọn; bật **Tự động** thì app tối từ 18:00 đến 06:00 theo giờ trên máy. Hộp thoại hệ thống chỉ tối theo trên iOS 13 trở lên.
-- **Cài đặt** chia lại: *Cho app hợp gu bạn* (giao diện, ngôn ngữ) › *Chìa khóa kết nối AI* › *Cách AI trò chuyện với bạn* › *Dữ liệu & thông tin*.
-- **Nền chat**: Theo skin / Không dùng ảnh nền / chọn bất kỳ trong 6 ảnh nền. Khi có ảnh nền, tin nhắn của AI nằm trong thẻ mờ để luôn dễ đọc; chế độ tối làm tối ảnh nền.
-- **Icon ứng dụng**: chọn icon của từng skin hoặc quay về icon mặc định (dùng `setAlternateIconName`, iOS sẽ hiện thông báo xác nhận). Khi chọn một skin, app hỏi có đổi luôn icon không.
-- Cách làm: `src/Theme.m` (bảng màu sáng/tối của từng skin), `src/AppearanceViewController.m` (màn hình chọn), `app/Resources/web/chat.css` (dùng biến màu `--bg`, `--accent`…; app chèn bảng màu của skin vào `<style id="themevars">`), `app/Resources/Wallpapers/` (6 ảnh nền JPEG), `app/Resources/Icon-*@2x/@3x.png` + `CFBundleAlternateIcons` trong `app/Info.plist` (6 icon).
-- Số phiên bản (`VERSION`) và mức iOS tối thiểu (12.0) **không đổi**. Gói `.deb` vẫn là rootful (`iphoneos-arm`, cài vào `/Applications`).
+🧠 AI — Suy luận & Tạo nội dung
 
-App chat Gemini và Claude cho iPhone iOS 12 đã jailbreak (arm64), giao diện kiểu Claude (sáng, tiếng Việt/Anh theo ngôn ngữ máy).
+• Ép mức suy luận mặc định lên Cao (High): AI phân tích sâu hơn, trả lời chi tiết và mạch lạc hơn.
 
-## Bản này làm được gì
-- **Nhập API key của chính bạn** ở lần mở đầu, có nút kiểm tra. Key chỉ nằm trên máy (Keychain, hoặc file quyền 0600 nếu Keychain từ chối). Không có key nào trong code hay trong .deb.
-- **Chat nhiều lượt, chữ chạy dần**, nút **dừng** trong lúc đang trả lời, nút **Sao chép / Lưu** dưới câu trả lời. Tin nhắn cũ của bạn có nút **Sao chép / Sửa**; sửa một tin sẽ bỏ các tin phía sau để gửi lại từ vị trí đó.
-- **Chọn model**: chạm vào tên model ở giữa thanh trên cùng. Danh sách lấy trực tiếp từ API của từng nhà cung cấp theo key của bạn (không ghi cứng tên model). Mặc định chọn bản Flash ổn định mới nhất.
-- **Lịch sử** (nút ba gạch bên trái): lưu trên máy, có **tìm kiếm** (theo tiêu đề và nội dung), **vuốt trái để Đổi tên / Xóa**.
-- **Cài đặt** (trong màn Lịch sử): đổi key, đặt chỉ dẫn AI tối đa 100.000 ký tự, giới hạn token đầu ra và độ dài lịch sử gửi cho model, xóa toàn bộ lịch sử, xem phiên bản.
-- Nút **soạn mới** (hình ô vuông có bút) bên phải: cuộc trò chuyện mới.
+• Luôn cho phép tạo ảnh & tệp: chỉ dẫn hệ thống được bổ sung ngầm — AI luôn được phép tạo ảnh (dùng định dạng Markdown) và tạo tệp/mã nguồn (khối code), không bao giờ trả lời "Tôi không thể tạo ảnh/tệp".
 
-## Thay đổi ở 0.2.1
-- **Sửa lỗi chat bị đứng ở dấu chấm chờ.** Nếu kết nối chạy dần (stream) bị lỗi mạng trước khi nhận được chữ nào, app tự gửi lại một lần dưới dạng yêu cầu thường (nhận cả câu trả lời một lúc). Kết nối stream cũng không còn nén dữ liệu để các đoạn chữ không bị giữ lại.
-- **Báo lỗi mạng cụ thể.** Thẻ lỗi giờ có dòng "Chi tiết" ghi lý do thật (ví dụ hết thời gian chờ, mất kết nối, lỗi TLS) kèm mã lỗi, thay vì chỉ một câu chung chung.
+🎙️ Trò chuyện bằng giọng nói (mới)
 
-## Mới ở 0.7.0: sửa tin cũ, tăng giới hạn, video, tạo ảnh và xuất tệp
-ClaudeMini - requested targeted changes
+• Ghi âm & Nhận dạng giọng nói tiếng Việt: nhấn nút 🎤 để nói, nội dung tự chuyển thành chữ vào ô nhập — xem trước rồi gửi.
 
-Replace only these files at the same paths in the repository:
-- src/AppSettings.h
-- src/AppSettings.m
-- src/SettingsViewController.m
-- src/GeminiStream.m
-- src/ClaudeStream.m
-- app/Resources/vi.lproj/Localizable.strings
-- app/Resources/en.lproj/Localizable.strings
+• Đọc câu trả lời ra âm thanh: AI trả lời xong tự động đọc bằng giọng nói rõ ràng; bật/tắt trong Cài đặt.
 
-Changes:
-- System instruction limit raised from 100,000 to 1,000,000 characters (stored locally and included in provider request; provider context limits still apply).
-- Added persisted reasoning-level setting: Low, Medium, High, Very High, MAX.
-- Gemini thinkingBudget is sent only to Gemini 2.5 models.
-- Claude extended-thinking budget is sent only to Claude 3.7 and Claude Sonnet/Opus 4 model families, with output budget room reserved.
-- Existing output token cap and conversation context settings remain unchanged.
+• Yêu cầu quyền Microphone khi dùng lần đầu — chỉ hoạt động khi bạn chủ động nhấn nút ghi âm.
 
-Not implemented by these changes:
-- @ Google app integrations: require OAuth, Google APIs and connector/backend implementation; a menu alone would not grant access.
-- /tạo ảnh command alias: existing image-capable Gemini model path remains; slash-command routing is not added here.
-- 50 million–1 billion tokens/day: this is not a client-side setting the app can grant. Actual quota is set by provider account/project and billing. This source version does not yet meter provider-reported daily token usage, so no fake quota switch was added.
-- MAX ×8 is a UI level label; it cannot force a provider to use 8x compute or exceed model/API limits.
+🔧 Sửa lỗi
 
-Validation: balanced delimiter sanity checks passed. Full iOS build not run; Xcode/iOS SDK is not available in this environment.
+• Sửa: giá trị "Độ dài lịch sử gửi cho AI" hiển thị không khớp với danh sách lựa chọn — đồng bộ hóa đúng từ 1 triệu đến 100 triệu ký tự.
+
+• Sửa: một số định dạng tệp nén bị báo lỗi không hỗ trợ dù là hợp lệ.
+
+• Cải thiện: luồng suy luận không còn bị ngắt quãng khi tạo ảnh hoặc xử lý tệp lớn.
+📋 Tính năng chính (từ bản trước)
+
+• Chat Gemini & Claude: nhập API key của bạn, lưu an toàn trên máy
+
+• Sửa tin nhắn cũ: chỉnh sửa bất kỳ tin nào và gửi lại từ vị trí đó
+
+• Tạo ảnh, phân tích ảnh/PDF/video, xuất Word/TXT
+
+• Giới hạn linh hoạt: độ dài lịch sử, giới hạn token đầu ra, mức suy luận từ Thấp đến Tối đa
+
+• 7 giao diện sẵn có: Claude, SideStore, LiveContainer, Dopamine, Chimera, Sileo, GitHub
+
+• Chế độ Sáng/Tối/Tự động, đổi icon ứng dụng, nền chat tùy chỉnh
+
+• Lưu lịch sử trên máy, tìm kiếm, xuất/xóa dễ dàng
+⚙️ Thông tin kỹ thuật
+
+• Phiên bản: 0.7.1 | iOS yêu cầu: 12.0+
+
+• Kiến trúc: arm64 | Định dạng: .deb (rootful) / .ipa (sandbox)
+
+• Frameworks bổ sung: Speech.framework, AVFoundation.framework (cho tính năng giọng nói)
+
+• Build tương tự hướng dẫn cũ — thay thế file và build bình thường
+💡 Mọi thay đổi đều giữ nguyên tương thích với dữ liệu và cài đặt của bản 0.7.0 — chỉ cần cài đè là dùng ngay, không cần xóa dữ liệu.
 
 ## Mới ở 0.6.0: file .ipa
 Mỗi lần build, GitHub Actions tạo thêm một artifact thứ hai tên **ClaudeMini-ipa** chứa file IPA theo số phiên bản hiện tại (artifact `ClaudeMini-deb` vẫn có như cũ).
