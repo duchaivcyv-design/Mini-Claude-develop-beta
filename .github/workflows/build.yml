@@ -1,4 +1,4 @@
-name: Build IPA
+name: Build GestaltX IPA
 
 on:
   push:
@@ -42,7 +42,17 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential curl git unzip wget cmake libssl-dev dpkg ldid zip
+          sudo apt-get install -y build-essential curl git unzip wget cmake libssl-dev dpkg zip pkg-config libplist-dev
+
+      - name: Build and Install ldid from Source
+        run: |
+          set -euo pipefail
+          git clone --recursive https://git.saurik.com/ldid.git /tmp/ldid || git clone https://github.com/ProcursusTeam/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          make -j$(nproc)
+          sudo cp ldid /usr/local/bin/
+          sudo chmod +x /usr/local/bin/ldid
+          ldid --version || true
 
       - name: Install Theos and iOS Toolchain for Linux
         run: |
@@ -51,7 +61,6 @@ jobs:
           sudo chown -R $USER:$USER /opt/theos
           git clone --recursive https://github.com/theos/theos.git /opt/theos
           
-          # Cài đặt iOS SDK cho Theos trên Ubuntu
           curl -LO https://github.com/theos/sdks/raw/master/iPhoneOS14.5.sdk.tar.xz
           tar -xf iPhoneOS14.5.sdk.tar.xz -C /opt/theos/sdks/
           rm iPhoneOS14.5.sdk.tar.xz
