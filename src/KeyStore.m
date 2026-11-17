@@ -1,4 +1,5 @@
 #import "KeyStore.h"
+#import "KeyTier.h"
 #import <Security/Security.h>
 
 static NSString *const kKeyService = @"com.puc.claudemini";
@@ -10,6 +11,16 @@ static NSString *AccountFor(AIProvider provider) {
 
 static NSString *FileNameFor(AIProvider provider) {
     return provider == AIProviderClaude ? @"key-claude.dat" : @"key.dat";
+}
+
+// The Keychain and the key files are slow (and loadKey is called from table cells and every screen that appears),
+// so the answer is remembered in memory. NSNull = "no key". Cleared whenever a key is saved or deleted.
+static NSMutableDictionary *gKeyCache;
+
+static NSMutableDictionary *KeyCache(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ gKeyCache = [NSMutableDictionary dictionary]; });
+    return gKeyCache;
 }
 
 @implementation KeyStore
@@ -25,14 +36,34 @@ static NSString *FileNameFor(AIProvider provider) {
 + (NSString *)fallbackPathFor:(AIProvider)provider {
     NSString *dir = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
     dir = [dir stringByAppendingPathComponent:@"ClaudeMini"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                              withIntermediateDirectories:YES
-                                               attributes:@{NSFilePosixPermissions: @0700}
-                                                    error:nil];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES
+                                                   attributes:@{NSFilePosixPermissions: @0700}
+                                                        error:nil];
+    });
     return [dir stringByAppendingPathComponent:FileNameFor(provider)];
 }
 
 + (NSString *)loadKeyForProvider:(AIProvider)provider {
+    NSNumber *cacheKey = @(provider);
+    @synchronized (KeyCache()) {
+        id cached = KeyCache()[cacheKey];
+        if (cached) return cached == [NSNull null] ? nil : cached;
+    }
+    NSString *loaded = [self loadKeyFromStorageForProvider:provider];
+    @synchronized (KeyCache()) {
+        KeyCache()[cacheKey] = loaded ?: [NSNull null];
+    }
+    return loaded;
+}
+
++ (void)forgetCachedKeyForProvider:(AIProvider)provider {
+    @synchronized (KeyCache()) { [KeyCache() removeObjectForKey:@(provider)]; }
+}
+
++ (NSString *)loadKeyFromStorageForProvider:(AIProvider)provider {
     NSMutableDictionary *query = [self baseQueryFor:provider];
     query[(__bridge id)kSecReturnData] = @YES;
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
@@ -55,6 +86,8 @@ static NSString *FileNameFor(AIProvider provider) {
 
 + (BOOL)saveKey:(NSString *)key forProvider:(AIProvider)provider {
     if (key.length == 0) return NO;
+    [self forgetCachedKeyForProvider:provider];
+    if (provider == AIProviderGemini) [KeyTier invalidateGeminiDetection];   // a new key may be free or paid: detect again
     NSData *data = [key dataUsingEncoding:NSUTF8StringEncoding];
 
     SecItemDelete((__bridge CFDictionaryRef)[self baseQueryFor:provider]);
@@ -62,6 +95,7 @@ static NSString *FileNameFor(AIProvider provider) {
     add[(__bridge id)kSecValueData] = data;
     add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlock;
     OSStatus status = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    [self forgetCachedKeyForProvider:provider];
 
     NSString *path = [self fallbackPathFor:provider];
     if (status == errSecSuccess) {
@@ -78,6 +112,8 @@ static NSString *FileNameFor(AIProvider provider) {
 }
 
 + (void)deleteKeyForProvider:(AIProvider)provider {
+    [self forgetCachedKeyForProvider:provider];
+    if (provider == AIProviderGemini) [KeyTier invalidateGeminiDetection];
     SecItemDelete((__bridge CFDictionaryRef)[self baseQueryFor:provider]);
     [[NSFileManager defaultManager] removeItemAtPath:[self fallbackPathFor:provider] error:nil];
 }

@@ -5,6 +5,8 @@
 #import "GeminiClient.h"
 #import "ClaudeClient.h"
 #import "ModelStore.h"
+#import "ModelCell.h"
+#import "KeyTier.h"
 #import "SystemPromptViewController.h"
 
 @interface ModelPickerViewController ()
@@ -30,8 +32,10 @@
     self.view.backgroundColor = [Theme background];
     [self rebuildGroups];
 
-    self.navigationItem.rightBarButtonItem =
-        [[UIBarButtonItem alloc] initWithTitle:L(@"refresh") style:UIBarButtonItemStylePlain target:self action:@selector(refresh)];
+    // A refresh icon (circular arrow) instead of the word "Làm mới".
+    UIBarButtonItem *refreshItem = [[UIBarButtonItem alloc] initWithImage:[Theme iconRefresh] style:UIBarButtonItemStylePlain target:self action:@selector(refresh)];
+    refreshItem.accessibilityLabel = L(@"refresh");
+    self.navigationItem.rightBarButtonItem = refreshItem;
 
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -50,30 +54,69 @@
 
     [self updateStatus];
     [self refresh];
+    [self updateBanner];
+}
+
+// A rounded note at the top that says what kind of key this is and what that means for the list.
+- (void)updateBanner {
+    NSMutableArray *lines = [NSMutableArray array];
+    if ([KeyStore hasKeyForProvider:AIProviderGemini]) {
+        [lines addObject:[KeyTier tierForProvider:AIProviderGemini] == KeyTierPaid ? L(@"tier_note_paid") : L(@"tier_note_free")];
+    }
+    if ([KeyStore hasKeyForProvider:AIProviderClaude]) [lines addObject:L(@"tier_note_claude")];
+    if (lines.count == 0) { self.tableView.tableHeaderView = nil; return; }
+
+    CGFloat width = self.view.bounds.size.width;
+    UIView *holder = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 10)];
+    UILabel *label = [[UILabel alloc] init];
+    label.numberOfLines = 0;
+    label.font = [UIFont systemFontOfSize:13.5];
+    label.textColor = [Theme text];
+    label.text = [lines componentsJoinedByString:@"\n"];
+    CGSize size = [label sizeThatFits:CGSizeMake(width - 32 - 28, CGFLOAT_MAX)];
+    UIView *box = [[UIView alloc] initWithFrame:CGRectMake(16, 14, width - 32, ceil(size.height) + 24)];
+    box.backgroundColor = [[Theme accent] colorWithAlphaComponent:0.12];
+    box.layer.cornerRadius = 14;
+    box.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    label.frame = CGRectMake(14, 12, box.bounds.size.width - 28, ceil(size.height));
+    label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [box addSubview:label];
+    [holder addSubview:box];
+    holder.frame = CGRectMake(0, 0, width, CGRectGetMaxY(box.frame) + 4);
+    self.tableView.tableHeaderView = holder;
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    self.statusLabel.frame = CGRectMake(32, 190, self.view.bounds.size.width - 64, 60);
+    self.statusLabel.frame = CGRectMake(32, 230, self.view.bounds.size.width - 64, 60);
 }
 
-// One group per provider that has a key. Gemini is split into "recommended for free keys" and the rest.
+// Groups: the models the user can actually use (paid Gemini models are left out for a free key), by family.
 - (void)rebuildGroups {
     NSMutableArray *groups = [NSMutableArray array];
     for (NSNumber *value in [Provider all]) {
         AIProvider provider = (AIProvider)value.integerValue;
         if (![KeyStore hasKeyForProvider:provider]) continue;
-        NSArray *models = [ModelStore cachedModelsForProvider:provider];
+        NSArray *models = [ModelStore visibleModelsForProvider:provider];
+        if (models.count == 0) continue;
         if (provider == AIProviderClaude) {
-            if (models.count > 0) [groups addObject:@{ @"title": L(@"models_group_claude"), @"items": models }];
+            [groups addObject:@{ @"title": L(@"models_group_claude"), @"items": models }];
             continue;
         }
-        NSMutableArray *recommended = [NSMutableArray array], *other = [NSMutableArray array];
-        for (NSDictionary *model in models) {
-            if ([ModelStore isLikelyFreeModelId:model[@"id"]]) [recommended addObject:model]; else [other addObject:model];
+        if ([KeyTier hidesPaidModelsForProvider:provider]) {
+            [groups addObject:@{ @"title": L(@"models_group_gemini_free2"), @"items": models }];
+            continue;
         }
-        if (recommended.count > 0) [groups addObject:@{ @"title": L(@"models_group_gemini_free"), @"items": recommended }];
-        if (other.count > 0) [groups addObject:@{ @"title": L(@"models_group_gemini_other"), @"items": other }];
+        NSMutableArray *pro = [NSMutableArray array], *flash = [NSMutableArray array], *other = [NSMutableArray array];
+        for (NSDictionary *model in models) {
+            NSString *modelId = model[@"id"];
+            if ([modelId rangeOfString:@"flash"].location != NSNotFound) [flash addObject:model];
+            else if ([modelId rangeOfString:@"pro"].location != NSNotFound) [pro addObject:model];
+            else [other addObject:model];
+        }
+        if (pro.count > 0) [groups addObject:@{ @"title": L(@"models_group_gemini_pro"), @"items": pro }];
+        if (flash.count > 0) [groups addObject:@{ @"title": L(@"models_group_gemini_flash"), @"items": flash }];
+        if (other.count > 0) [groups addObject:@{ @"title": L(@"models_group_gemini_more"), @"items": other }];
     }
     self.groups = groups;
 }
@@ -114,6 +157,7 @@
             }
             if (me.pendingFetches == 0) {
                 [me rebuildGroups];
+                [me updateBanner];
                 [me.tableView reloadData];
                 [me updateStatus];
             }
@@ -152,30 +196,32 @@
         return cell;
     }
 
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    cell.backgroundColor = [Theme surface];
-    cell.textLabel.font = [UIFont systemFontOfSize:17];
-    cell.textLabel.textColor = [Theme text];
-    cell.detailTextLabel.font = [UIFont systemFontOfSize:13];
-    cell.detailTextLabel.textColor = [Theme secondaryText];
-
+    ModelCell *cell = [tableView dequeueReusableCellWithIdentifier:@"model"];
+    if (!cell) cell = [[ModelCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"model"];
     NSDictionary *model = [self modelAtIndexPath:indexPath];
-    NSString *modelId = model[@"id"];
-    cell.textLabel.text = [model[@"name"] isKindOfClass:[NSString class]] ? model[@"name"] : modelId;
-    cell.detailTextLabel.text = modelId;
-    BOOL selected = [modelId isEqualToString:self.selectedModel];
-    cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
-    cell.tintColor = [Theme accent];
+    [cell configureWithModel:model selected:[model[@"id"] isEqualToString:self.selectedModel]];
     return cell;
 }
 
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    return indexPath.section == 0 ? 52 : [ModelCell rowHeight];
+}
+
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return (self.groups.count > 0 && section == (NSInteger)self.groups.count) ? L(@"models_footer") : nil;
+    if (self.groups.count == 0 || section != (NSInteger)self.groups.count) return nil;
+    if ([KeyStore hasKeyForProvider:AIProviderGemini] && [KeyTier hidesPaidModelsForProvider:AIProviderGemini]) {
+        return [NSString stringWithFormat:@"%@\n%@", L(@"models_footer"), L(@"models_footer_free")];
+    }
+    return L(@"models_footer");
 }
 
 #pragma mark - UITableViewDelegate
 
 - (void)tableView:(UITableView *)tableView willDisplayHeaderView:(UIView *)view forSection:(NSInteger)section {
+    if ([view isKindOfClass:[UITableViewHeaderFooterView class]]) ((UITableViewHeaderFooterView *)view).textLabel.textColor = [Theme secondaryText];
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section {
     if ([view isKindOfClass:[UITableViewHeaderFooterView class]]) ((UITableViewHeaderFooterView *)view).textLabel.textColor = [Theme secondaryText];
 }
 

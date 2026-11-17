@@ -34,7 +34,11 @@ static NSString *FilePath(NSString *cid) {
 
 #pragma mark - Index
 
+// The index is read by every screen that lists chats: keep it in memory (this app is the only writer).
+static NSArray *gIndexCache;
+
 + (void)writeIndex:(NSArray *)entries {
+    @synchronized (self) { gIndexCache = [entries copy]; }
     NSData *data = [NSJSONSerialization dataWithJSONObject:entries options:0 error:nil];
     if (data) [data writeToFile:IndexPath() options:NSDataWritingAtomic error:nil];
 }
@@ -56,6 +60,13 @@ static NSString *FilePath(NSString *cid) {
 }
 
 + (NSArray *)rawIndex {
+    @synchronized (self) { if (gIndexCache) return gIndexCache; }
+    NSArray *loaded = [self readIndexFromDisk];
+    @synchronized (self) { gIndexCache = [loaded copy]; }
+    return loaded;
+}
+
++ (NSArray *)readIndexFromDisk {
     NSData *data = [NSData dataWithContentsOfFile:IndexPath()];
     if (data.length == 0) return [self rebuildIndex];
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
@@ -138,6 +149,7 @@ static NSString *FilePath(NSString *cid) {
 }
 
 + (void)deleteAll {
+    @synchronized (self) { gIndexCache = nil; }
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *file in [fm contentsOfDirectoryAtPath:ChatsDir() error:nil]) {
         [fm removeItemAtPath:[ChatsDir() stringByAppendingPathComponent:file] error:nil];

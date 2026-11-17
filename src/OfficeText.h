@@ -18,6 +18,5 @@ enum {
 
 char *office_docx_text(const unsigned char *zip, size_t zipLen, int *err);
 char *office_pptx_text(const unsigned char *zip, size_t zipLen, int *err);
-char *office_zip_text(const unsigned char *zip, size_t zipLen, int *err);
 
 #endif

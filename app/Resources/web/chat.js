@@ -43,7 +43,39 @@
     return false;
   };
 
-  window.addEventListener('scroll', function () { stick = nearBottom(); }, false);
+  window.addEventListener('scroll', function () { stick = nearBottom(); updateJump(); }, false);
+
+  // "Scroll to latest" button: shown when the reader is away from the bottom (e.g. a reply grows below the screen).
+  var jumpEl = document.createElement('div');
+  jumpEl.id = 'jump';
+  jumpEl.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5v13M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  document.body.appendChild(jumpEl);
+  var jumpAnim = null;
+
+  function updateJump() {
+    var away = document.documentElement.scrollHeight - (window.innerHeight + window.pageYOffset) > 120;
+    var show = away && !document.getElementById('empty');
+    jumpEl.className = show ? 'show' : '';
+  }
+
+  // Eased scroll to the bottom (iOS 12 has no smooth scrollTo).
+  function glideToBottom() {
+    if (jumpAnim) { cancelAnimationFrame(jumpAnim); }
+    var from = window.pageYOffset, start = null;
+    var dur = 280;
+    function step(t) {
+      if (start === null) { start = t; }
+      var k = Math.min(1, (t - start) / dur);
+      var e = 1 - Math.pow(1 - k, 3);
+      var to = document.documentElement.scrollHeight - window.innerHeight;   // re-read: the reply may still be growing
+      window.scrollTo(0, from + (to - from) * e);
+      if (k < 1) { jumpAnim = requestAnimationFrame(step); } else { jumpAnim = null; stick = true; updateJump(); }
+    }
+    jumpAnim = requestAnimationFrame(step);
+  }
+
+  jumpEl.addEventListener('click', function () { glideToBottom(); }, false);
+  window.addEventListener('touchstart', function () { if (jumpAnim) { cancelAnimationFrame(jumpAnim); jumpAnim = null; } }, { passive: true });
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -67,11 +99,18 @@
     box.appendChild(el('h1', null, S.emptyTitle));
     box.appendChild(el('p', null, S.emptySub));
     msgsEl.appendChild(box);
+    jumpEl.className = '';
+    document.documentElement.className = 'is-empty';
+    window.scrollTo(0, 0);
+    post({ type: 'empty', value: true });
   }
 
   function removeEmpty() {
     var e = document.getElementById('empty');
-    if (e && e.parentNode) { e.parentNode.removeChild(e); }
+    if (!e) { return; }
+    if (e.parentNode) { e.parentNode.removeChild(e); }
+    document.documentElement.className = '';
+    post({ type: 'empty', value: false });
   }
 
   function clearErrors() {
@@ -266,7 +305,7 @@
       msgsEl.appendChild(row);
       current = { row: row, content: content, dot: dot, status: status, text: '', timer: null, rendered: false };
       refreshRegenerate();
-      toBottom(false);
+      updateJump();   // the reply stays where it is: no automatic scrolling
     },
 
     delta: function (s) {
@@ -277,11 +316,11 @@
       if (!c.rendered) {            // first words appear immediately
         c.rendered = true;
         renderInto(c.content, c.text);
-        toBottom(false);
+        updateJump();
       } else if (!c.timer) {        // then at most once per RENDER_INTERVAL
         c.timer = setTimeout(function () {
           c.timer = null;
-          if (current === c) { renderInto(c.content, c.text); toBottom(false); }
+          if (current === c) { renderInto(c.content, c.text); updateJump(); }
         }, RENDER_INTERVAL);
       }
     },
@@ -303,6 +342,7 @@
         buildActions(c.row);
       }
       refreshRegenerate();
+      updateJump();
     },
 
     error: function (msg, canRetry) {
@@ -321,6 +361,8 @@
     },
 
     scrollEnd: function () {
+      if (document.getElementById('empty')) { window.scrollTo(0, 0); return; }   // empty chat: nothing to scroll to
+      if (current) { updateJump(); return; }   // keyboard moved while a reply is streaming: leave the reader where they are
       stick = true;
       toBottom(true);
     }

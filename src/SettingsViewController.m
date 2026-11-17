@@ -8,18 +8,22 @@
 #import "SystemPromptViewController.h"
 #import "DiagnosticsViewController.h"
 #import "AppearanceViewController.h"
+#import "KeyTier.h"
+#import "ModelStore.h"
 
-// Order on screen: look & language on top, then the API keys, then how the AI behaves, then data & info.
+// Order on screen: appearance & language on top, then the API keys, then the AI settings, then data & info, then credits.
 typedef NS_ENUM(NSInteger, SettingsSection) {
     SettingsSectionLook = 0,
     SettingsSectionKeys,
     SettingsSectionAssistant,
     SettingsSectionData,
+    SettingsSectionCredits,
     SettingsSectionCount
 };
 
 @interface SettingsViewController ()
 @property (strong, nonatomic) UITableView *tableView;
+@property (assign, nonatomic) BOOL hasAppearedOnce;
 @end
 
 @implementation SettingsViewController
@@ -49,12 +53,14 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     self.view.backgroundColor = [Theme background];
     self.tableView.backgroundColor = [Theme background];
     self.tableView.separatorColor = [Theme border];
-    [self.tableView reloadData];
+    if (self.view.window) [self.tableView reloadData];   // hidden behind another screen: it reloads when it comes back (viewWillAppear)
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.tableView reloadData];   // keys / system prompt may have changed on the next screen
+    // The table was just built in viewDidLoad: only refresh when coming BACK from a sub-screen (keys / prompt may have changed).
+    if (self.hasAppearedOnce) [self.tableView reloadData];
+    self.hasAppearedOnce = YES;
 }
 
 #pragma mark - Helpers
@@ -86,8 +92,10 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == SettingsSectionLook || section == SettingsSectionKeys) return 2;   // look, language / Gemini key, Claude key
+    if (section == SettingsSectionLook) return 2;      // look, language
+    if (section == SettingsSectionKeys) return 3;      // Gemini key, Claude key, kind of Gemini key
     if (section == SettingsSectionAssistant) return 4;
+    if (section == SettingsSectionCredits) return 2;   // TaoJB, PucSaur
     return 3;   // data: clear history, version, diagnostics
 }
 
@@ -96,12 +104,13 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         case SettingsSectionLook:      return L(@"settings_header_look");
         case SettingsSectionKeys:      return L(@"settings_header_keys");
         case SettingsSectionAssistant: return L(@"settings_header_ai");
+        case SettingsSectionCredits:   return L(@"settings_header_credits");
         default:                       return L(@"settings_header_data");
     }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == SettingsSectionKeys) return L(@"keys_footer");
+    if (section == SettingsSectionKeys) return [NSString stringWithFormat:@"%@\n\n%@", L(@"keys_footer"), L(@"key_tier_footer")];
     if (section == SettingsSectionAssistant) return L(@"attach_memory_footer");
     if (section == SettingsSectionData) return L(@"privacy_footer");
     return nil;
@@ -116,7 +125,17 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     cell.detailTextLabel.textColor = [Theme secondaryText];
 
     switch (indexPath.section) {
+        case SettingsSectionCredits:
+            cell.textLabel.text = indexPath.row == 0 ? @"TaoJB" : @"PucSaur";
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
         case SettingsSectionKeys: {
+            if (indexPath.row == 2) {
+                cell.textLabel.text = L(@"key_tier_title");
+                cell.detailTextLabel.text = [self keyTierSummary];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                break;
+            }
             AIProvider provider = indexPath.row == 0 ? AIProviderGemini : AIProviderClaude;
             cell.textLabel.text = provider == AIProviderClaude ? L(@"api_key_claude") : L(@"api_key_gemini");
             cell.detailTextLabel.text = [self maskedKeyFor:provider];
@@ -179,7 +198,13 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     switch (indexPath.section) {
+        case SettingsSectionCredits:
+            break;
         case SettingsSectionKeys: {
+            if (indexPath.row == 2) {
+                [self chooseKeyTier];
+                break;
+            }
             RootViewController *keyScreen = [[RootViewController alloc] init];
             keyScreen.embedded = YES;
             keyScreen.provider = indexPath.row == 0 ? AIProviderGemini : AIProviderClaude;
@@ -224,8 +249,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)outputTokensName {
-    NSInteger count = [AppSettings maxOutputTokens];
-    return count <= 0 ? @"Tối đa theo model" : [NSString stringWithFormat:@"%ld tokens", (long)count];
+    return [NSString stringWithFormat:@"%ld tokens", (long)[AppSettings maxOutputTokens]];
 }
 
 
@@ -260,17 +284,14 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)contextMemoryName {
-    NSUInteger chars = [AppSettings contextLimitChars];
-    return [NSString stringWithFormat:@"%lu triệu ký tự", (unsigned long)(chars / 1000000)];
+    return [NSString stringWithFormat:L(@"context_memory_value"), (unsigned long)([AppSettings contextLimitChars] / 1000)];
 }
 
 - (void)chooseOutputTokens {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"output_tokens_title")
                                                                    message:L(@"output_tokens_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@0, @"Tối đa theo model (không giới hạn riêng trong ứng dụng)"],
-                          @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"],
-                          @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
+    NSArray *options = @[ @[@2048, @"2,048 tokens"], @[@4096, @"4,096 tokens"], @[@8192, @"8,192 tokens"], @[@16384, @"16,384 tokens"], @[@32768, @"32,768 tokens"], @[@65536, @"65,536 tokens"], @[@128000, @"128,000 tokens"] ];
     __weak typeof(self) weakSelf = self;
     for (NSArray *option in options) {
         NSInteger value = [option[0] integerValue];
@@ -290,9 +311,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"context_memory_title")
                                                                    message:L(@"context_memory_note")
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *options = @[ @[@1000000, @"1 triệu ký tự"], @[@5000000, @"5 triệu ký tự"],
-                          @[@10000000, @"10 triệu ký tự"], @[@25000000, @"25 triệu ký tự"],
-                          @[@50000000, @"50 triệu ký tự"], @[@100000000, @"100 triệu ký tự"] ];
+    NSArray *options = @[ @[@200000, [NSString stringWithFormat:L(@"context_memory_value"), 200]],
+                          @[@400000, [NSString stringWithFormat:L(@"context_memory_value"), 400]],
+                          @[@600000, [NSString stringWithFormat:L(@"context_memory_value"), 600]] ];
     __weak typeof(self) weakSelf = self;
     for (NSArray *option in options) {
         NSUInteger value = [option[0] unsignedIntegerValue];
@@ -329,6 +350,67 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 #pragma mark - Language
+
+#pragma mark - Kind of Gemini key (free / paid)
+
+- (NSString *)tierName:(KeyTierLevel)tier {
+    switch (tier) {
+        case KeyTierFree: return L(@"key_tier_free");
+        case KeyTierPaid: return L(@"key_tier_paid");
+        default:          return L(@"key_tier_unknown");
+    }
+}
+
+- (NSString *)keyTierSummary {
+    if (![KeyStore hasKeyForProvider:AIProviderGemini]) return @"\u2014";
+    NSInteger override = [KeyTier geminiOverride];
+    if (override == 1) return L(@"key_tier_free");
+    if (override == 2) return L(@"key_tier_paid");
+    return [NSString stringWithFormat:@"%@ \u00B7 %@", L(@"key_tier_auto_short"), [self tierName:[KeyTier detectedGeminiTier]]];
+}
+
+- (void)chooseKeyTier {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"key_tier_title")
+                                                                   message:L(@"key_tier_message")
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak typeof(self) weakSelf = self;
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"key_tier_auto") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [KeyTier setGeminiOverride:0];
+        [KeyTier invalidateGeminiDetection];
+        [weakSelf redetectKeyTier];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"key_tier_free") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [KeyTier setGeminiOverride:1];
+        [weakSelf.tableView reloadData];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"key_tier_paid") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [KeyTier setGeminiOverride:2];
+        [weakSelf.tableView reloadData];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    NSIndexPath *path = [NSIndexPath indexPathForRow:2 inSection:SettingsSectionKeys];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:path] ?: self.view;
+    sheet.popoverPresentationController.sourceRect = sheet.popoverPresentationController.sourceView.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+// Asks Google again (one tiny request) and tells the person what it found.
+- (void)redetectKeyTier {
+    [self.tableView reloadData];
+    if (![KeyStore hasKeyForProvider:AIProviderGemini]) return;
+    __weak typeof(self) weakSelf = self;
+    [KeyTier forceDetectGeminiTierWithModels:[ModelStore cachedModelsForProvider:AIProviderGemini] completion:^(KeyTierLevel tier) {
+        SettingsViewController *me = weakSelf;
+        if (!me) return;
+        [KeyTier consumePopupPending];   // no pop-up here: the person is in Settings and sees the result below
+        [me.tableView reloadData];
+        NSString *message = tier == KeyTierUnknown ? L(@"key_tier_failed")
+                                                    : [NSString stringWithFormat:L(@"key_tier_result"), [me tierName:tier]];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil message:message preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [me presentViewController:alert animated:YES completion:nil];
+    }];
+}
 
 - (void)chooseLanguage {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:L(@"language")

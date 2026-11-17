@@ -3,6 +3,7 @@
 #import "Theme.h"
 #import "ConversationStore.h"
 #import "SettingsViewController.h"
+#import "MiniNavigationController.h"
 
 @interface HistoryViewController () <UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
 @property (strong, nonatomic) UITableView *tableView;
@@ -19,8 +20,14 @@
     self.title = L(@"history_title");
     self.view.backgroundColor = [Theme background];
     self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
-    self.navigationItem.rightBarButtonItem =
-        [[UIBarButtonItem alloc] initWithTitle:L(@"settings") style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)];
+    // Settings is a cog wheel (no text). The screen slides in from the left, so "back" slides it out to the left again.
+    UIBarButtonItem *gear = [[UIBarButtonItem alloc] initWithImage:[Theme iconGear] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)];
+    gear.accessibilityLabel = L(@"settings");
+    self.navigationItem.rightBarButtonItem = gear;
+    self.navigationItem.hidesBackButton = YES;
+    UIBarButtonItem *back = [[UIBarButtonItem alloc] initWithImage:[Theme iconBack] style:UIBarButtonItemStylePlain target:self action:@selector(closeTapped)];
+    back.accessibilityLabel = L(@"close");
+    self.navigationItem.leftBarButtonItem = back;
 
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -64,12 +71,19 @@
     self.searchBar.barStyle = [Theme darkMode] ? UIBarStyleBlack : UIBarStyleDefault;
     self.searchBar.keyboardAppearance = [Theme keyboardAppearance];
     self.emptyLabel.textColor = [Theme secondaryText];
-    [self.tableView reloadData];   // cells use a reuse identifier that includes the skin, so they are rebuilt
+    if (self.view.window) [self.tableView reloadData];   // cells use a reuse identifier that includes the skin, so they are rebuilt
+    // (hidden behind Settings: viewWillAppear reloads the list when it comes back)
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self reloadEntries];
+}
+
+// The system's edge-swipe would slide this screen out to the right: MiniNavigationController asks here and we say no,
+// so closing always goes left. (The gesture itself is never switched on and off: that left the navigation stuck.)
+- (BOOL)allowsBackSwipe {
+    return NO;
 }
 
 - (void)viewDidLayoutSubviews {
@@ -114,6 +128,24 @@
 
 - (void)settingsTapped {
     [self.navigationController pushViewController:[[SettingsViewController alloc] init] animated:YES];
+}
+
+- (void)closeTapped {
+    [self closeToLeft];
+}
+
+// Leaves this screen by sliding it out to the left (the chat slides in from the right): the opposite of how it came in.
+- (void)closeToLeft {
+    UINavigationController *navigation = self.navigationController;
+    if (!navigation) return;
+    [self.view endEditing:YES];
+    CATransition *transition = [CATransition animation];
+    transition.duration = 0.3;
+    transition.type = kCATransitionPush;
+    transition.subtype = kCATransitionFromRight;
+    transition.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [navigation.view.layer addAnimation:transition forKey:@"historyClose"];
+    [navigation popViewControllerAnimated:NO];
 }
 
 #pragma mark - UISearchBarDelegate
@@ -168,7 +200,7 @@
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     NSString *cid = self.entries[indexPath.row][@"id"];
     if (self.onSelect) self.onSelect(cid);
-    [self.navigationController popViewControllerAnimated:YES];
+    [self closeToLeft];
 }
 
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView

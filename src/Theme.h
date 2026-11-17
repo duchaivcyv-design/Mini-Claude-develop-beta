@@ -38,6 +38,9 @@ typedef NS_ENUM(NSInteger, ThemeSkin) {
 + (UIImage *)iconCompose;   // square with a pencil: "new chat"
 + (UIImage *)iconSend;
 + (UIImage *)iconStop;
++ (UIImage *)iconGear;      // cog wheel: Settings
++ (UIImage *)iconRefresh;   // circular arrow: reload the model list
++ (UIImage *)iconBack;      // chevron pointing left
 
 + (void)styleNavigationBar:(UINavigationBar *)bar;
 
@@ -74,6 +77,9 @@ typedef NS_ENUM(NSInteger, ThemeSkin) {
 
 + (NSString *)iconNameForSkin:(ThemeSkin)skin;       // key in CFBundleAlternateIcons; nil for the default icon
 + (UIImage *)iconPreviewForSkin:(ThemeSkin)skin;
++ (NSString *)iconDisplayNameForSkin:(ThemeSkin)skin;   // "SideStore", "LiveContainer"... (no "Skin"); "Mặc định" for the default icon
++ (ThemeSkin)activeIconSkin;                          // the icon that is on the Home Screen now (ThemeSkinClaude = default)
++ (BOOL)respringWithHelper;                           // rootful .deb only: asks the root helper to restart SpringBoard
 + (NSString *)currentIconName;                       // nil = default icon (system alternate-icon API)
 
 // Rootful .deb only: a setuid-root helper swaps the icon files inside the app and runs uicache, because the

@@ -220,6 +220,81 @@ static NSString *WallpaperFileKey(NSInteger index) {
     }];
 }
 
++ (UIImage *)iconGear {
+    return [self iconWithSize:CGSizeMake(24, 24) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 1.9);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        CGContextSetLineJoin(c, kCGLineJoinRound);
+        // one closed outline: 8 teeth around a body, then the hub circle
+        const int teeth = 8;
+        const CGFloat cx = 12, cy = 12, rOuter = 9.6, rInner = 7.1;
+        UIBezierPath *path = [UIBezierPath bezierPath];
+        for (int i = 0; i < teeth; i++) {
+            CGFloat base = (CGFloat)i * (2 * M_PI / teeth) - M_PI / 2;
+            CGFloat half = (CGFloat)(M_PI / teeth);          // half of one tooth+gap period
+            CGFloat a0 = base - half * 0.95, a1 = base - half * 0.45, a2 = base + half * 0.45, a3 = base + half * 0.95;
+            CGPoint p0 = CGPointMake(cx + rInner * cos(a0), cy + rInner * sin(a0));
+            if (i == 0) [path moveToPoint:p0]; else [path addLineToPoint:p0];
+            [path addLineToPoint:CGPointMake(cx + rOuter * cos(a1), cy + rOuter * sin(a1))];
+            [path addLineToPoint:CGPointMake(cx + rOuter * cos(a2), cy + rOuter * sin(a2))];
+            [path addLineToPoint:CGPointMake(cx + rInner * cos(a3), cy + rInner * sin(a3))];
+        }
+        [path closePath];
+        CGContextAddPath(c, path.CGPath);
+        CGContextAddEllipseInRect(c, CGRectMake(cx - 3, cy - 3, 6, 6));
+        CGContextStrokePath(c);
+    }];
+}
+
++ (UIImage *)iconRefresh {
+    // Same look as the system "arrow.clockwise": a ~290 degree ring that opens at the upper right, with a solid arrow head.
+    return [self iconWithSize:CGSizeMake(24, 24) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetFillColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 2.2);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        const CGFloat cx = 12, cy = 12.5, radius = 7.2;
+        const CGFloat startAngle = (CGFloat)(M_PI * 0.10);                    // just below the right-hand side
+        const CGFloat endAngle = startAngle + (CGFloat)(M_PI * 1.62);        // ends at the upper right (clockwise)
+        UIBezierPath *arc = [UIBezierPath bezierPathWithArcCenter:CGPointMake(cx, cy) radius:radius
+                                                       startAngle:startAngle endAngle:endAngle clockwise:YES];
+        CGContextAddPath(c, arc.CGPath);
+        CGContextStrokePath(c);
+
+        // Arrow head: a filled triangle pointing along the direction of travel.
+        CGPoint tip = CGPointMake(cx + radius * cos(endAngle), cy + radius * sin(endAngle));
+        CGPoint dir = CGPointMake(-sin(endAngle), cos(endAngle));
+        CGPoint normal = CGPointMake(cos(endAngle), sin(endAngle));
+        CGFloat len = 5.2, half = 3.6;
+        CGPoint front = CGPointMake(tip.x + 2.0 * dir.x, tip.y + 2.0 * dir.y);
+        CGPoint baseA = CGPointMake(tip.x - (len - 2.0) * dir.x + half * normal.x, tip.y - (len - 2.0) * dir.y + half * normal.y);
+        CGPoint baseB = CGPointMake(tip.x - (len - 2.0) * dir.x - half * normal.x, tip.y - (len - 2.0) * dir.y - half * normal.y);
+        UIBezierPath *head = [UIBezierPath bezierPath];
+        [head moveToPoint:front];
+        [head addLineToPoint:baseA];
+        [head addLineToPoint:baseB];
+        [head closePath];
+        head.lineJoinStyle = kCGLineJoinRound;
+        head.lineWidth = 1.2;
+        CGContextAddPath(c, head.CGPath);
+        CGContextDrawPath(c, kCGPathFillStroke);
+    }];
+}
+
++ (UIImage *)iconBack {
+    return [self iconWithSize:CGSizeMake(24, 24) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 2.4);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        CGContextSetLineJoin(c, kCGLineJoinRound);
+        CGContextMoveToPoint(c, 14.5, 5.5);
+        CGContextAddLineToPoint(c, 8, 12);
+        CGContextAddLineToPoint(c, 14.5, 18.5);
+        CGContextStrokePath(c);
+    }];
+}
+
 + (UIImage *)iconSend {
     return [self iconWithSize:CGSizeMake(20, 20) draw:^(CGContextRef c) {
         CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
@@ -369,7 +444,26 @@ static NSString *WallpaperFileKey(NSInteger index) {
     }
     if (cachedImage && cachedIndex == index) return cachedImage;
     NSString *path = [self wallpaperPathForIndex:index];
-    UIImage *image = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    UIImage *image = nil;
+    if (path) {
+        // Decode once, already scaled to the screen: a full-size bitmap behind the web view makes every screen change heavier.
+        CGSize screen = [UIScreen mainScreen].bounds.size;
+        CGFloat maxPixels = MAX(screen.width, screen.height) * [UIScreen mainScreen].scale;
+        CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], NULL);
+        if (source) {
+            NSDictionary *options = @{ (id)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+                                       (id)kCGImageSourceCreateThumbnailWithTransform: @YES,
+                                       (id)kCGImageSourceShouldCacheImmediately: @YES,
+                                       (id)kCGImageSourceThumbnailMaxPixelSize: @(maxPixels) };
+            CGImageRef cg = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+            CFRelease(source);
+            if (cg) {
+                image = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
+                CGImageRelease(cg);
+            }
+        }
+        if (!image) image = [UIImage imageWithContentsOfFile:path];
+    }
     cachedImage = image;
     cachedIndex = image ? index : 0;
     return image;
@@ -486,8 +580,31 @@ static NSString *WallpaperFileKey(NSInteger index) {
 + (UIImage *)iconPreviewForSkin:(ThemeSkin)skin {
     NSString *name = [self iconNameForSkin:skin];
     NSString *file = [NSString stringWithFormat:@"Icon-%@@3x", name ?: @"Default"];
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; });
+    UIImage *cached = [cache objectForKey:file];
+    if (cached) return cached;
     NSString *path = [[NSBundle mainBundle] pathForResource:file ofType:@"png"];
-    return path ? [UIImage imageWithContentsOfFile:path] : nil;
+    UIImage *image = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (image) [cache setObject:image forKey:file];
+    return image;
+}
+
++ (NSString *)iconDisplayNameForSkin:(ThemeSkin)skin {
+    NSString *name = [self iconNameForSkin:skin];
+    return name.length > 0 ? name : L(@"icon_default");
+}
+
+// The icon that is really on the Home Screen: the helper's last choice (.deb) or the system's alternate icon (.ipa).
++ (ThemeSkin)activeIconSkin {
+    if ([self iconHelperAvailable]) return [self helperIconSkin];
+    NSString *name = [self currentIconName];
+    if (name.length == 0) return ThemeSkinClaude;
+    for (NSInteger i = ThemeSkinSideStore; i < ThemeSkinCount; i++) {
+        if ([[self iconNameForSkin:(ThemeSkin)i] isEqualToString:name]) return (ThemeSkin)i;
+    }
+    return ThemeSkinClaude;
 }
 
 + (NSString *)currentIconName {
@@ -555,11 +672,37 @@ static NSString *HelperPath(void) {
     if (current && wanted && ![current isEqualToData:wanted]) [self applyIconWithHelperForSkin:skin message:NULL];
 }
 
++ (BOOL)respringWithHelper {
+    if (![self iconHelperAvailable]) return NO;
+    const char *path = HelperPath().fileSystemRepresentation;
+    char *argv[] = { (char *)path, (char *)"--respring", NULL };
+    pid_t pid = 0;
+    return posix_spawn(&pid, path, NULL, NULL, argv, environ) == 0;   // not awaited: SpringBoard restarts right away
+}
+
 #pragma mark - Web page
 
 + (NSString *)signature {
     LoadPrefs();
     return [NSString stringWithFormat:@"%ld-%d-%ld", (long)gSkin, EffectiveDark() ? 1 : 0, (long)[self effectiveWallpaperIndex]];
+}
+
+// data: URI of the chosen alternate icon (nil for the default icon). Cached per icon: the files never change at run time.
++ (NSString *)activeIconDataURI {
+    ThemeSkin skin = [self activeIconSkin];
+    NSString *name = [self iconNameForSkin:skin];
+    if (name.length == 0) return nil;
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSMutableDictionary dictionary]; });
+    NSString *cached = cache[name];
+    if (cached) return cached;
+    NSString *path = [[NSBundle mainBundle] pathForResource:[NSString stringWithFormat:@"Icon-%@@3x", name] ofType:@"png"];
+    NSData *data = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!data) return nil;
+    NSString *uri = [@"data:image/png;base64," stringByAppendingString:[data base64EncodedStringWithOptions:0]];
+    cache[name] = uri;
+    return uri;
 }
 
 + (NSString *)webThemeCSS {
@@ -589,12 +732,17 @@ static NSString *HelperPath(void) {
     }
     [css appendString:@"}"];
 
+    // The picture on the empty chat follows the app icon that is chosen (the default icon keeps the original logo).
+    NSString *iconURI = [self activeIconDataURI];
+    if (iconURI.length > 0) [css appendFormat:@".empty .logo{background-image:url(\"%@\") !important;}", iconURI];
+
     if (hasWallpaper) {
         // Text sits on translucent cards so it stays readable on any wallpaper.
         [css appendString:@".row.assistant .body{background:var(--card);padding:12px 14px;border-radius:16px;}"];
         [css appendString:@".act{background:var(--card);}"];
         [css appendString:@".thinking-label{display:inline-block;background:var(--card);padding:3px 9px;border-radius:9px;}"];
-        [css appendString:@".empty{background:var(--card);border-radius:22px;margin:14vh 6px 0 6px;padding:26px 16px 24px 16px;}"];
+        // Pinned with fixed pixels (not vh): when the keyboard opens the page gets shorter and a vh margin made the card jump.
+        [css appendString:@".empty{background:var(--card);border-radius:22px;top:24px;width:calc(100% - 44px);max-width:716px;padding:26px 16px 24px 16px;box-sizing:border-box;}"];
     }
     return css;
 }

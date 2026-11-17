@@ -49,8 +49,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     NSInteger requested = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
     if (modelCap <= 0) modelCap = [self.model hasPrefix:@"claude-3-"] ? 4096 : 8192;
-    // Zero means model maximum; finite values remain an optional user-selected ceiling.
-    return requested > 0 ? MIN(requested, modelCap) : modelCap;
+    return MIN(requested, modelCap);
 }
 
 // Neutral turns -> Anthropic "messages": photos become image blocks, PDFs become document blocks.
@@ -175,30 +174,20 @@ didReceiveResponse:(NSURLResponse *)response
     if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
         NSDictionary *headers = [(NSHTTPURLResponse *)response allHeaderFields];
         for (id key in headers) {
-            NSString *headerName = [[key description] lowercaseString];
+            if ([[key description] caseInsensitiveCompare:@"Retry-After"] != NSOrderedSame) continue;
             id rawValue = headers[key];
-            NSTimeInterval delay = 0;
-            if ([headerName isEqualToString:@"retry-after"]) {
-                delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
-                if (delay <= 0) {
-                    // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
-                    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-                    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
-                    formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
-                    formatter.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss z";
-                    NSDate *retryDate = [formatter dateFromString:[rawValue description]];
-                    if (retryDate) delay = [retryDate timeIntervalSinceNow];
-                }
-            } else if ([headerName isEqualToString:@"anthropic-ratelimit-requests-reset"] ||
-                       [headerName isEqualToString:@"anthropic-ratelimit-tokens-reset"]) {
-                // Anthropic also returns RFC3339 reset timestamps for request/token buckets.
-                if (@available(iOS 10.0, *)) {
-                    NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
-                    NSDate *resetDate = [formatter dateFromString:[rawValue description]];
-                    if (resetDate) delay = [resetDate timeIntervalSinceNow];
-                }
+            NSTimeInterval delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
+            if (delay <= 0) {
+                // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
+                NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+                formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+                formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
+                formatter.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss z";
+                NSDate *retryDate = [formatter dateFromString:[rawValue description]];
+                if (retryDate) delay = [retryDate timeIntervalSinceNow];
             }
-            if (delay > self.retryAfterSeconds) self.retryAfterSeconds = MIN(900.0, MAX(0.0, delay));
+            self.retryAfterSeconds = MIN(900.0, MAX(0.0, delay));
+            break;
         }
     }
     completionHandler(NSURLSessionResponseAllow);

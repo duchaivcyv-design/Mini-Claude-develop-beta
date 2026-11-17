@@ -49,6 +49,9 @@ static UIImage *RadioImage(BOOL selected) {
 @property (strong, nonatomic) UILabel *darkLabel;
 @property (strong, nonatomic) UIImageView *lightRadio;
 @property (strong, nonatomic) UIImageView *darkRadio;
+// Transparent buttons covering the whole column (picture + label + tick), so any of them can be tapped.
+@property (strong, nonatomic) UIButton *lightHit;
+@property (strong, nonatomic) UIButton *darkHit;
 @end
 
 static const CGSize kModePreviewSize = { 84, 148 };
@@ -76,6 +79,10 @@ static const CGSize kModePreviewSize = { 84, 148 };
         }
         [self.contentView addSubview:self.lightRadio];
         [self.contentView addSubview:self.darkRadio];
+        self.lightHit = [UIButton buttonWithType:UIButtonTypeCustom];
+        self.darkHit = [UIButton buttonWithType:UIButtonTypeCustom];
+        [self.contentView addSubview:self.lightHit];
+        [self.contentView addSubview:self.darkHit];
     }
     return self;
 }
@@ -92,6 +99,12 @@ static const CGSize kModePreviewSize = { 84, 148 };
         labels[i].frame = CGRectMake(centers[i] - 60, 16 + kModePreviewSize.height + 8, 120, 20);
         radios[i].frame = CGRectMake(centers[i] - 12, 16 + kModePreviewSize.height + 36, 24, 24);
     }
+    CGFloat colWidth = width / 2;
+    CGFloat colHeight = self.contentView.bounds.size.height;
+    self.lightHit.frame = CGRectMake(0, 0, colWidth, colHeight);
+    self.darkHit.frame = CGRectMake(colWidth, 0, colWidth, colHeight);
+    [self.contentView bringSubviewToFront:self.lightHit];
+    [self.contentView bringSubviewToFront:self.darkHit];
 }
 
 @end
@@ -99,6 +112,7 @@ static const CGSize kModePreviewSize = { 84, 148 };
 @interface AppearanceViewController ()
 @property (strong, nonatomic) UITableView *tableView;
 @property (assign, nonatomic) BOOL changingIcon;
+@property (assign, nonatomic) BOOL hasAppearedOnce;
 @end
 
 @implementation AppearanceViewController
@@ -133,7 +147,8 @@ static const CGSize kModePreviewSize = { 84, 148 };
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.tableView reloadData];   // the icon may have been changed from outside (e.g. the system reverted it)
+    if (self.hasAppearedOnce) [self.tableView reloadData];   // the icon may have been changed from outside (e.g. the system reverted it)
+    self.hasAppearedOnce = YES;
 }
 
 #pragma mark - Helpers
@@ -146,13 +161,45 @@ static const CGSize kModePreviewSize = { 84, 148 };
 
 // Which skin's icon is on the Home Screen now (ThemeSkinClaude = the default icon).
 - (ThemeSkin)currentIconSkin {
-    if ([Theme iconHelperAvailable]) return [Theme helperIconSkin];
-    NSString *name = [Theme currentIconName];
-    if (name.length == 0) return ThemeSkinClaude;
-    for (NSInteger i = ThemeSkinSideStore; i < ThemeSkinCount; i++) {
-        if ([[Theme iconNameForSkin:(ThemeSkin)i] isEqualToString:name]) return (ThemeSkin)i;
+    return [Theme activeIconSkin];
+}
+
+// Rendering these images is the slow part of rebuilding the list, and they never change: draw each one once.
+static NSCache *ImageCache(void) {
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; });
+    return cache;
+}
+
+- (UIImage *)cachedIconForSkin:(ThemeSkin)skin {
+    NSString *key = [NSString stringWithFormat:@"icon%ld", (long)skin];
+    UIImage *image = [ImageCache() objectForKey:key];
+    if (!image) {
+        image = [self roundedIcon:[Theme iconPreviewForSkin:skin] side:44];
+        if (image) [ImageCache() setObject:image forKey:key];
     }
-    return ThemeSkinClaude;
+    return image;
+}
+
+- (UIImage *)cachedSwatchForSkin:(ThemeSkin)skin {
+    NSString *key = [NSString stringWithFormat:@"swatch%ld", (long)skin];
+    UIImage *image = [ImageCache() objectForKey:key];
+    if (!image) {
+        image = [self swatchImageWithColor:[Theme swatchColorForSkin:skin]];
+        if (image) [ImageCache() setObject:image forKey:key];
+    }
+    return image;
+}
+
+- (UIImage *)cachedWallpaperThumb:(NSInteger)index {
+    NSString *key = [NSString stringWithFormat:@"wp%ld", (long)index];
+    UIImage *image = [ImageCache() objectForKey:key];
+    if (!image) {
+        image = [self roundedThumbnail:[Theme wallpaperThumbnail:index] size:CGSizeMake(28, 50)];
+        if (image) [ImageCache() setObject:image forKey:key];
+    }
+    return image;
 }
 
 - (UIImage *)roundedIcon:(UIImage *)image side:(CGFloat)side {
@@ -238,7 +285,7 @@ static const CGSize kModePreviewSize = { 84, 148 };
     switch (indexPath.section) {
         case AppearanceSectionSkin: {
             ThemeSkin skin = (ThemeSkin)indexPath.row;
-            cell.imageView.image = [self swatchImageWithColor:[Theme swatchColorForSkin:skin]];
+            cell.imageView.image = [self cachedSwatchForSkin:skin];
             cell.textLabel.text = [Theme skinName:skin];
             cell.detailTextLabel.text = L([Theme skinColorKey:skin]);
             cell.accessoryType = (skin == [Theme skin]) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
@@ -251,8 +298,8 @@ static const CGSize kModePreviewSize = { 84, 148 };
                 BOOL dark = [Theme darkMode];
                 [modeCell.lightButton setImage:[Theme modePreviewImageDark:NO size:kModePreviewSize] forState:UIControlStateNormal];
                 [modeCell.darkButton setImage:[Theme modePreviewImageDark:YES size:kModePreviewSize] forState:UIControlStateNormal];
-                [modeCell.lightButton addTarget:self action:@selector(lightTapped) forControlEvents:UIControlEventTouchUpInside];
-                [modeCell.darkButton addTarget:self action:@selector(darkTapped) forControlEvents:UIControlEventTouchUpInside];
+                [modeCell.lightHit addTarget:self action:@selector(lightTapped) forControlEvents:UIControlEventTouchUpInside];
+                [modeCell.darkHit addTarget:self action:@selector(darkTapped) forControlEvents:UIControlEventTouchUpInside];
                 modeCell.lightLabel.text = L(@"mode_light");
                 modeCell.darkLabel.text = L(@"mode_dark");
                 modeCell.lightLabel.textColor = [Theme text];
@@ -285,7 +332,7 @@ static const CGSize kModePreviewSize = { 84, 148 };
                 NSInteger index = indexPath.row - 1;   // rows 2...7 -> wallpapers 1...6
                 cell.textLabel.text = [Theme wallpaperName:index];
                 cell.detailTextLabel.text = L(@"wallpaper_item_note");
-                cell.imageView.image = [self roundedThumbnail:[Theme wallpaperThumbnail:index] size:CGSizeMake(28, 50)];
+                cell.imageView.image = [self cachedWallpaperThumb:index];
                 isSelected = (choice == index);
             }
             cell.accessoryType = isSelected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
@@ -293,8 +340,8 @@ static const CGSize kModePreviewSize = { 84, 148 };
         }
         default: {
             ThemeSkin skin = (ThemeSkin)indexPath.row;
-            cell.imageView.image = [self roundedIcon:[Theme iconPreviewForSkin:skin] side:44];
-            cell.textLabel.text = (skin == ThemeSkinClaude) ? L(@"icon_default") : [Theme skinName:skin];
+            cell.imageView.image = [self cachedIconForSkin:skin];
+            cell.textLabel.text = [Theme iconDisplayNameForSkin:skin];   // "SideStore", "LiveContainer"... without the word "Skin"
             cell.detailTextLabel.text = nil;
             cell.accessoryType = (skin == [self currentIconSkin]) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
@@ -372,7 +419,7 @@ static const CGSize kModePreviewSize = { 84, 148 };
     // Each skin has its own icon: offer to switch the Home Screen icon too (iOS shows its own confirmation).
     if (skin != ThemeSkinClaude && [self iconsSupported] && [self currentIconSkin] != skin) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:L(@"icon_offer_title")
-                                                                       message:[NSString stringWithFormat:L(@"icon_offer_msg"), [Theme skinName:skin]]
+                                                                       message:[NSString stringWithFormat:L(@"icon_offer_msg"), [Theme iconDisplayNameForSkin:skin]]
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:L(@"icon_offer_no") style:UIAlertActionStyleCancel handler:nil]];
         __weak typeof(self) weakSelf = self;
@@ -404,7 +451,8 @@ static const CGSize kModePreviewSize = { 84, 148 };
                 [me.tableView reloadData];
                 if (ok) {
                     [DiagnosticLog log:@"icon changed through the root helper"];
-                    [me showMessage:L(@"icon_helper_done")];
+                    [Theme postChange];   // the picture on the empty chat follows the icon
+                    [me offerRespring];
                 } else {
                     [DiagnosticLog log:@"icon helper: %@", failure ?: @"-"];
                     [me showMessage:[NSString stringWithFormat:L(@"icon_error"), failure ?: @"-"]];
@@ -425,11 +473,24 @@ static const CGSize kModePreviewSize = { 84, 148 };
                 if (error) {
                     [DiagnosticLog log:@"icon change failed: %@ (%ld)", error.localizedDescription, (long)error.code];
                     [me showMessage:[NSString stringWithFormat:L(@"icon_error"), error.localizedDescription ?: @"-"]];
+                } else {
+                    [Theme postChange];   // the picture on the empty chat follows the icon
                 }
                 [me.tableView reloadData];
             });
         }];
     }
+}
+
+// The new Home Screen icon often appears only after SpringBoard restarts: offer to do it right away.
+- (void)offerRespring {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil message:L(@"icon_helper_done") preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:L(@"icon_later") style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:L(@"icon_respring") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [DiagnosticLog log:@"respring requested after an icon change"];
+        [Theme respringWithHelper];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showMessage:(NSString *)message {

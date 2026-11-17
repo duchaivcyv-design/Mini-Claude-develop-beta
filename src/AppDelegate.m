@@ -5,6 +5,7 @@
 #import "Strings.h"
 #import "Theme.h"
 #import "DiagnosticLog.h"
+#import "MiniNavigationController.h"
 
 @interface AppDelegate ()
 @property (assign, nonatomic) BOOL showingMain;
@@ -41,9 +42,10 @@
 // Window colours follow the chosen skin. On iOS 13+ the window also switches system controls (alerts, pickers) to dark.
 - (void)applyThemeToWindow {
     self.window.backgroundColor = [Theme background];
-    self.window.tintColor = [Theme accent];
+    if (![self.window.tintColor isEqual:[Theme accent]]) self.window.tintColor = [Theme accent];   // a change re-lays out every bar: only when needed
     if (@available(iOS 13.0, *)) {
-        self.window.overrideUserInterfaceStyle = [Theme darkMode] ? UIUserInterfaceStyleDark : UIUserInterfaceStyleLight;
+        UIUserInterfaceStyle style = [Theme darkMode] ? UIUserInterfaceStyleDark : UIUserInterfaceStyleLight;
+        if (self.window.overrideUserInterfaceStyle != style) self.window.overrideUserInterfaceStyle = style;
     }
 }
 
@@ -60,10 +62,9 @@
 - (void)themeChanged {
     [self applyThemeToWindow];
     UIViewController *root = self.window.rootViewController;
-    if ([root isKindOfClass:[UINavigationController class]]) {
-        UINavigationController *nav = (UINavigationController *)root;
-        [Theme styleNavigationBar:nav.navigationBar];
-        [nav setNeedsStatusBarAppearanceUpdate];
+    if ([root isKindOfClass:[MiniNavigationController class]]) {
+        // Restyling the bar in the middle of a push/pop (or for a wallpaper-only change) can leave "back" dead.
+        [(MiniNavigationController *)root restyleBarWhenIdle];
     }
 }
 
@@ -98,8 +99,9 @@
 
 - (void)showMainAnimated:(BOOL)animated {
     self.showingMain = YES;
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[[ChatViewController alloc] init]];
+    MiniNavigationController *nav = [[MiniNavigationController alloc] initWithRootViewController:[[ChatViewController alloc] init]];
     [Theme styleNavigationBar:nav.navigationBar];
+    [nav restyleBarWhenIdle];
     [self setRoot:nav animated:animated];
 }
 
