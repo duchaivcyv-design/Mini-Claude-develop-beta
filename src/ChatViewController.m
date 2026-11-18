@@ -77,7 +77,19 @@ static NSString *ClippedForLog(NSString *text) {
     return oneLine.length > 200 ? [[oneLine substringToIndex:200] stringByAppendingString:@"…"] : oneLine;
 }
 
-#pragma mark - VoiceChatFullScreenViewController (Đưa lên trước ChatViewController để tránh lỗi undeclared)
+#pragma mark - Forward Declarations & Interfaces
+
+@class ChatViewController;
+
+// Khai báo trước các phương thức nội bộ của ChatViewController để VoiceChatFullScreenViewController truy cập an toàn
+@interface ChatViewController (VoiceIntegration)
+@property (strong, nonatomic) VoiceChatManager *voiceManager;
+@property (strong, nonatomic) UITextView *textView;
+- (void)textViewDidChange:(UITextView *)textView;
+- (void)sendTapped;
+@end
+
+#pragma mark - VoiceChatFullScreenViewController
 
 @interface VoiceChatFullScreenViewController : UIViewController
 @property (assign, nonatomic) NSInteger selectedVoiceIndex;
