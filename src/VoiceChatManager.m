@@ -12,6 +12,7 @@
 @property (copy, nonatomic) void (^errorBlock)(NSString *);
 @property (strong, nonatomic) AVSpeechSynthesizer *synthesizer;
 @property (assign, nonatomic) BOOL recording;
+@property (assign, nonatomic) VoiceStyle selectedVoiceStyle;
 @end
 
 @implementation VoiceChatManager
@@ -32,6 +33,7 @@
         _engine = [[AVAudioEngine alloc] init];
         _synthesizer = [[AVSpeechSynthesizer alloc] init];
         _synthesizer.delegate = self;
+        _selectedVoiceStyle = VoiceStyleNaturalFemale; // Mặc định giọng nữ tự nhiên
     }
     return self;
 }
@@ -47,6 +49,53 @@
 
 - (BOOL)isRecording { return self.recording; }
 - (BOOL)isSpeaking { return self.synthesizer.isSpeaking; }
+
+#pragma mark - Voice Selection (3 Giọng nói AI thật)
+
+- (void)setVoiceStyle:(VoiceStyle)style {
+    _selectedVoiceStyle = style;
+}
+
+- (AVSpeechSynthesisVoice *)selectedVoice {
+    NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
+    AVSpeechSynthesisVoice *fallbackVi = [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"];
+    
+    // Lọc các giọng tiếng Việt có sẵn trên hệ thống iOS (nếu có chất lượng cao / enhanced)
+    NSMutableArray<AVSpeechSynthesisVoice *> *vietnameseVoices = [NSMutableArray array];
+    for (AVSpeechSynthesisVoice *v in voices) {
+        if ([v.language hasPrefix:@"vi"]) {
+            [vietnameseVoices addObject:v];
+        }
+    }
+    
+    switch (self.selectedVoiceStyle) {
+        case VoiceStyleNaturalFemale: {
+            // Ưu tiên tìm giọng nữ tiếng Việt hoặc giọng Siri/Enhanced
+            for (AVSpeechSynthesisVoice *v in vietnameseVoices) {
+                if ([v.identifier containsString:@"female"] || [v.name containsString:@"Nam"] == NO) {
+                    return v;
+                }
+            }
+            return fallbackVi ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
+        }
+        case VoiceStyleDeepMale: {
+            // Ưu tiên tìm giọng nam trầm/ấm
+            for (AVSpeechSynthesisVoice *v in vietnameseVoices) {
+                if ([v.identifier containsString:@"male"] || [v.name containsString:@"Nam"] || [v.name containsString:@"HoaiMy"] == NO) {
+                    return v;
+                }
+            }
+            return fallbackVi;
+        }
+        case VoiceStyleExpressiveBot: {
+            // Giọng biểu cảm cao / Hoặc fallback sang en-US cao cấp nếu tiếng Việt ít lựa chọn
+            return vietnameseVoices.lastObject ?: fallbackVi;
+        }
+    }
+    return fallbackVi;
+}
+
+#pragma mark - Recording
 
 - (void)startRecordingWithPartial:(void (^)(NSString *))partial final:(void (^)(NSString *))final error:(void (^)(NSString *))error {
     if (self.recording) { if (error) error(@"Đang ghi âm rồi."); return; }
@@ -64,15 +113,15 @@
     __weak typeof(self) weakSelf = self;
     self.task = [self.recognizer recognitionTaskWithRequest:self.request resultHandler:^(SFSpeechRecognitionResult *result, NSError *err) {
         VoiceChatManager *me = weakSelf; if (!me) return;
-        BOOL final = (result != nil && result.isFinal);
+        BOOL isFinalResult = (result != nil && result.isFinal);
         if (result) {
             NSString *text = result.bestTranscription.formattedString ?: @"";
-            if (final) { if (me.finalBlock) me.finalBlock(text); }
+            if (isFinalResult) { if (me.finalBlock) me.finalBlock(text); }
             else { if (me.partialBlock) me.partialBlock(text); }
         }
-        if (err || final) {
+        if (err || isFinalResult) {
             [me stopRecording];
-            if (err && !final && me.errorBlock) me.errorBlock(err.localizedDescription ?: @"Lỗi nhận dạng giọng nói.");
+            if (err && !isFinalResult && me.errorBlock) me.errorBlock(err.localizedDescription ?: @"Lỗi nhận dạng giọng nói.");
         }
     }];
 
@@ -102,13 +151,31 @@
     [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
 }
 
+#pragma mark - Speech Synthesis (Text to Speech với 3 phong cách)
+
 - (void)speak:(NSString *)text {
     if (text.length == 0) return;
     [self stopSpeaking];
+    
     AVSpeechUtterance *utter = [[AVSpeechUtterance alloc] initWithString:text];
-    utter.voice = [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"] ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
-    utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02;
-    utter.pitchMultiplier = 1.0;
+    utter.voice = [self selectedVoice];
+    
+    // Tùy chỉnh ngữ điệu, tốc độ theo từng phong cách giọng nói AI thật
+    switch (self.selectedVoiceStyle) {
+        case VoiceStyleNaturalFemale:
+            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02;
+            utter.pitchMultiplier = 1.1; // Tone sáng, tự nhiên
+            break;
+        case VoiceStyleDeepMale:
+            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95;
+            utter.pitchMultiplier = 0.82; // Tone trầm ấm, nam tính
+            break;
+        case VoiceStyleExpressiveBot:
+            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.08;
+            utter.pitchMultiplier = 1.25; // Nhanh hoạt bát, biểu cảm
+            break;
+    }
+    
     [self.synthesizer speakUtterance:utter];
 }
 
