@@ -24,6 +24,10 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
 @property (assign, nonatomic) long long inputTokenUsage;
 @property (assign, nonatomic) long long outputTokenUsage;
+
+// Biến bổ trợ cho cơ chế Bẻ cưỡng chế retry vô hạn trên cùng 1 Key & Model
+@property (assign, nonatomic) NSInteger sameKeyRetryCount;
+@property (strong, nonatomic) NSMutableURLRequest *savedRequest;
 @end
 
 @implementation ClaudeStream
@@ -38,22 +42,20 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
         _buffer = [NSMutableData data];
         _errorBody = [NSMutableData data];
         _useStreaming = YES;
+        _sameKeyRetryCount = 0;
     }
     return self;
 }
 
 #pragma mark - Request format
 
-// Prefer the per-model cap returned by Anthropic's Models API; use a conservative fallback for older cached lists.
 - (NSInteger)maxTokens {
     NSInteger requested = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
     if (modelCap <= 0) modelCap = [self.model hasPrefix:@"claude-3-"] ? 4096 : 8192;
-    // Zero means model maximum; finite values remain an optional user-selected ceiling.
     return requested > 0 ? MIN(requested, modelCap) : modelCap;
 }
 
-// Neutral turns -> Anthropic "messages": photos become image blocks, PDFs become document blocks.
 + (NSArray *)messagesFromTurns:(NSArray *)turns {
     NSMutableArray *messages = [NSMutableArray array];
     for (NSDictionary *turn in turns) {
@@ -79,6 +81,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 #pragma mark - Control
 
 - (void)start {
+    self.sameKeyRetryCount = 0;
     NSInteger maxTokens = [self maxTokens];
     NSMutableDictionary *payload = [@{ @"model": self.model ?: @"",
                                        @"max_tokens": @(maxTokens),
@@ -87,8 +90,6 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     if (self.system.length > 0) payload[@"system"] = self.system;
 
     NSString *lowerModel = self.model.lowercaseString;
-    // Anthropic Fast mode is a provider feature, not a reasoning-level shortcut.
-    // Only send it to model families explicitly supported by the current Messages API.
     BOOL supportsFast = ([lowerModel containsString:@"claude-opus-5-5"] ||
                          [lowerModel containsString:@"claude-fable-5-2"] ||
                          [lowerModel containsString:@"claude-mythos-5-2"] ||
@@ -110,10 +111,8 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     if (adaptiveThinking) {
         NSArray *efforts = @[@"low", @"medium", @"high", @"xhigh", @"max"];
         NSString *effort = efforts[(NSUInteger)level];
-        // 4.6 supports max but model support for xhigh is model-family-specific.
         if ([lowerModel containsString:@"-4-6"] && level == AIReasoningLevelVeryHigh) effort = @"high";
         NSMutableDictionary *thinking = [@{ @"type": @"adaptive" } mutableCopy];
-        // Thinking summaries are accepted on newer adaptive-thinking model families.
         if ([lowerModel containsString:@"-4-7"] || [lowerModel containsString:@"-4-8"] ||
             [lowerModel containsString:@"-5-"] || [lowerModel containsString:@"-6-"]) {
             thinking[@"display"] = @"summarized";
@@ -127,14 +126,11 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
         if (budget >= 1024) payload[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": @(budget) };
     }
 
-    // Anthropic executes this managed search tool server-side; no client-side browser credentials are needed.
     if ([AppSettings webSearchEnabled]) {
         payload[@"tools"] = @[@{ @"type": @"web_search_20250305", @"name": @"web_search", @"max_uses": @3 }];
     }
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    // High-effort reasoning and grounded searches can take longer before the first SSE event.
-    // Use a generous inactivity timeout; the delegate resets it as data continues to arrive.
     NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:kClaudeMessagesURL]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
@@ -150,6 +146,24 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
         [request setValue:@"fast-mode-2026-02-01" forHTTPHeaderField:@"anthropic-beta"];
     }
 
+    self.savedRequest = request;
+    [self executeForcedRequest:request];
+}
+
+- (void)executeForcedRequest:(NSMutableURLRequest *)request {
+    if (self.finished || self.cancelled) return;
+    
+    [self.buffer setLength:0];
+    [self.errorBody setLength:0];
+    self.status = 0;
+    self.gotText = NO;
+    self.inStreamErrorType = nil;
+    self.inStreamErrorMessage = nil;
+    self.stopReason = nil;
+    self.inputTokenUsage = 0;
+    self.outputTokenUsage = 0;
+
+    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
     config.timeoutIntervalForResource = 3600;
@@ -181,7 +195,6 @@ didReceiveResponse:(NSURLResponse *)response
             if ([headerName isEqualToString:@"retry-after"]) {
                 delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
                 if (delay <= 0) {
-                    // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
                     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
                     formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
                     formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
@@ -191,7 +204,6 @@ didReceiveResponse:(NSURLResponse *)response
                 }
             } else if ([headerName isEqualToString:@"anthropic-ratelimit-requests-reset"] ||
                        [headerName isEqualToString:@"anthropic-ratelimit-tokens-reset"]) {
-                // Anthropic also returns RFC3339 reset timestamps for request/token buckets.
                 if (@available(iOS 10.0, *)) {
                     NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
                     NSDate *resetDate = [formatter dateFromString:[rawValue description]];
@@ -215,15 +227,80 @@ didReceiveResponse:(NSURLResponse *)response
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (self.finished) return;
+
+    BOOL isRateLimitOrOverload = (self.status == 429 || self.status == 529 ||
+                                  [self.inStreamErrorType isEqualToString:@"overloaded_error"] ||
+                                  [self.inStreamErrorType isEqualToString:@"rate_limit_error"]);
+
+    if (!self.cancelled && error == nil && !isRateLimitOrOverload && self.status == 200 && (self.inStreamErrorType.length == 0)) {
+        self.finished = YES;
+        [self.session finishTasksAndInvalidate];
+        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
+        
+        if (!self.gotText) {
+            GeminiStreamError result = [self.stopReason isEqualToString:@"refusal"] ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
+            NSString *detail = self.stopReason;
+            if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+                self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+            }
+            void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+            self.onDelta = nil;
+            self.onUsage = nil;
+            self.onFinish = nil;
+            if (finish) finish(result, self.status, detail);
+            return;
+        }
+        
+        if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+            self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+        }
+        void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+        self.onDelta = nil;
+        self.onUsage = nil;
+        self.onFinish = nil;
+        if (finish) finish(GeminiStreamErrorNone, self.status, nil);
+        return;
+    }
+
+    if (self.cancelled) {
+        self.finished = YES;
+        [self.session finishTasksAndInvalidate];
+        void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+        self.onDelta = nil;
+        self.onUsage = nil;
+        self.onFinish = nil;
+        if (finish) finish(GeminiStreamErrorCancelled, self.status, nil);
+        return;
+    }
+
+    // === BẺ CƯỠNG CHẾ TỐI CAO: RETRY VÔ HẠN NGẦM TRÊN CÙNG 1 KEY & MODEL KHI DÍNH 429 / OVERLOAD ===
+    if (isRateLimitOrOverload || (error != nil && self.status == 0)) {
+        if (self.sameKeyRetryCount < 40) { // Thử tối đa 40 lần với backoff tăng dần
+            self.sameKeyRetryCount++;
+            NSTimeInterval backoffDelay = MIN(pow(2.0, self.sameKeyRetryCount), 30.0);
+            NSTimeInterval jitter = (double)(arc4random_uniform(1000)) / 500.0; // 0 -> 2s ngẫu nhiên
+            NSTimeInterval totalWait = backoffDelay + jitter;
+            
+            NSLog(@"[SupremeForce-ClaudeSameKey] Dính lỗi 429/Overload/Network trên cùng 1 Key. Lần retry thứ %ld. Đang chờ %.2fs rồi đấm lại server...", (long)self.sameKeyRetryCount, totalWait);
+            
+            [self.session finishTasksAndInvalidate];
+            
+            __weak typeof(self) weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(totalWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [weakSelf executeForcedRequest:weakSelf.savedRequest];
+            });
+            return;
+        }
+    }
+
+    // Xử lý lỗi thông thường khi đã vượt quá giới hạn retry
     self.finished = YES;
     [self.session finishTasksAndInvalidate];
 
     GeminiStreamError result = GeminiStreamErrorNone;
     NSString *detail = nil;
 
-    if (self.cancelled) {
-        result = GeminiStreamErrorCancelled;
-    } else if (error != nil) {
+    if (error != nil) {
         result = GeminiStreamErrorNetwork;
         detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
     } else if (self.status != 200) {
@@ -250,8 +327,6 @@ didReceiveResponse:(NSURLResponse *)response
         self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
     }
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
-    // Anthropic may deliver overloaded_error/rate_limit_error inside an HTTP 200 SSE stream.
-    // Translate those event types to retryable status codes for the controller.
     NSInteger reportedStatus = self.status;
     if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"overloaded_error"]) reportedStatus = 529;
     else if (reportedStatus == 200 && [self.inStreamErrorType isEqualToString:@"rate_limit_error"]) reportedStatus = 429;
@@ -284,7 +359,6 @@ didReceiveResponse:(NSURLResponse *)response
     }
 }
 
-// Lines look like "event: content_block_delta" (ignored: the JSON carries the type) and "data: {...}".
 - (void)processLineData:(NSData *)lineData {
     NSString *line = [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
     if (line == nil) return;
@@ -312,7 +386,6 @@ didReceiveResponse:(NSURLResponse *)response
     } else if ([type isEqualToString:@"content_block_delta"]) {
         NSDictionary *delta = [event[@"delta"] isKindOfClass:[NSDictionary class]] ? event[@"delta"] : nil;
         NSString *text = [delta[@"text"] isKindOfClass:[NSString class]] ? delta[@"text"] : nil;
-        // Only plain text is shown (thinking deltas, tool JSON, etc. are not requested and would be ignored here).
         if ([delta[@"type"] isEqualToString:@"text_delta"] && text.length > 0) {
             self.gotText = YES;
             if (self.onDelta) self.onDelta(text);
@@ -323,15 +396,12 @@ didReceiveResponse:(NSURLResponse *)response
         if ([delta[@"stop_reason"] isKindOfClass:[NSString class]]) self.stopReason = delta[@"stop_reason"];
         self.outputTokenUsage = MAX(self.outputTokenUsage, [usage[@"output_tokens"] longLongValue]);
     } else if ([type isEqualToString:@"error"]) {
-        // An error can arrive after the 200 response has started (for example overloaded_error).
         NSDictionary *err = [event[@"error"] isKindOfClass:[NSDictionary class]] ? event[@"error"] : nil;
         self.inStreamErrorType = [err[@"type"] isKindOfClass:[NSString class]] ? err[@"type"] : @"api_error";
         if ([err[@"message"] isKindOfClass:[NSString class]]) self.inStreamErrorMessage = err[@"message"];
     }
-    // ping, message_start, content_block_start, content_block_stop, message_stop: nothing to do
 }
 
-// Single-request mode: the whole reply is one JSON object with a "content" array of blocks.
 - (void)processWholeBody {
     if (self.buffer.length == 0) return;
     id json = [NSJSONSerialization JSONObjectWithData:self.buffer options:0 error:nil];
@@ -369,10 +439,8 @@ didReceiveResponse:(NSURLResponse *)response
     if ([err[@"message"] isKindOfClass:[NSString class]]) *message = err[@"message"];
 }
 
-// `status` is 0 for an error that arrived inside a stream: then only the error type is known.
 + (GeminiStreamError)errorForStatus:(NSInteger)status type:(NSString *)type message:(NSString *)message {
     NSString *lower = [message lowercaseString];
-    // A key with no money left answers 400 invalid_request_error: say so instead of "unknown error".
     if (lower.length > 0 && [lower rangeOfString:@"credit balance"].location != NSNotFound) return GeminiStreamErrorNoCredit;
 
     if ([type isEqualToString:@"authentication_error"]) return GeminiStreamErrorInvalidKey;
@@ -386,7 +454,7 @@ didReceiveResponse:(NSURLResponse *)response
     if (status == 400) {
         if (lower.length > 0 && ([lower rangeOfString:@"too long"].location != NSNotFound ||
                                  [lower rangeOfString:@"too large"].location != NSNotFound ||
-                                 [lower rangeOfString:@"exceeds"].location != NSNotFound)) {
+                                 [lower rangeOfString::"exceeds"].location != NSNotFound)) {
             return GeminiStreamErrorTooLarge;
         }
         return GeminiStreamErrorUnknown;
@@ -395,7 +463,7 @@ didReceiveResponse:(NSURLResponse *)response
     if (status == 403) return GeminiStreamErrorPermissionDenied;
     if (status == 404) return GeminiStreamErrorModelNotFound;
     if (status == 429) return GeminiStreamErrorRateLimited;
-    if (status >= 500) return GeminiStreamErrorServer;   // includes 529 (overloaded)
+    if (status >= 500) return GeminiStreamErrorServer;
     return GeminiStreamErrorUnknown;
 }
 
