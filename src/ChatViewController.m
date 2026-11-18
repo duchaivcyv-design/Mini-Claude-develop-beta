@@ -26,11 +26,11 @@
 #import <math.h>
 
 static const CGFloat kMaxInputHeight = 120;
-static const CGFloat kStripHeight = 64;               // chip row above the text box (56 pt chips + spacing)
-static const CGFloat kToolsRowHeight = 0;       // the row of 4 tool buttons is hidden
-static const NSUInteger kGreetingCount = 6;           // how many different lines can appear under the greeting
+static const CGFloat kStripHeight = 64;               
+static const CGFloat kToolsRowHeight = 0;       
+static const NSUInteger kGreetingCount = 6;           
 
-#pragma mark - Weak script handler (WKUserContentController retains its handlers)
+#pragma mark - Weak script handler
 
 @protocol ScriptMessageTarget <NSObject>
 - (void)handleScriptMessage:(WKScriptMessage *)message;
@@ -77,6 +77,184 @@ static NSString *ClippedForLog(NSString *text) {
     return oneLine.length > 200 ? [[oneLine substringToIndex:200] stringByAppendingString:@"…"] : oneLine;
 }
 
+#pragma mark - VoiceChatFullScreenViewController (Giao diện toàn màn hình ánh sáng xanh chuyển động)
+
+@interface VoiceChatFullScreenViewController : UIViewController
+@property (assign, nonatomic) NSInteger selectedVoiceIndex;
+@property (strong, nonatomic) ChatViewController *chatController;
+@end
+
+@implementation VoiceChatFullScreenViewController {
+    UIView *_blueLightView1;
+    UIView *_blueLightView2;
+    UILabel *_statusLabel;
+    UIButton *_micButton;
+    BOOL _isListening;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithRed:0.05 green:0.08 blue:0.15 alpha:1.0];
+    
+    [self setupMovingBlueLights];
+    
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(20, 50, 40, 40);
+    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    [closeBtn addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:closeBtn];
+    
+    CGFloat screenW = CGRectGetWidth(self.view.bounds);
+    CGFloat screenH = CGRectGetHeight(self.view.bounds);
+    
+    UIView *centerOrb = [[UIView alloc] initWithFrame:CGRectMake((screenW - 140)/2, (screenH - 140)/2 - 40, 140, 140)];
+    centerOrb.layer.cornerRadius = 70;
+    centerOrb.backgroundColor = [[UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.3] colorWithAlphaComponent:0.4];
+    centerOrb.layer.shadowColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:1.0].CGColor;
+    centerOrb.layer.shadowOpacity = 0.8;
+    centerOrb.layer.shadowRadius = 30;
+    centerOrb.layer.shadowOffset = CGSizeZero;
+    [self.view addSubview:centerOrb];
+    
+    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    pulse.fromValue = @1.0;
+    pulse.toValue = @1.15;
+    pulse.autoreverses = YES;
+    pulse.repeatCount = HUGE_VALF;
+    pulse.duration = 2.0;
+    [centerOrb.layer addAnimation:pulse forKey:@"pulse"];
+    
+    _statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, CGRectGetMaxY(centerOrb.frame) + 30, screenW - 40, 40)];
+    _statusLabel.text = @"Đang sẵn sàng trò chuyện...";
+    _statusLabel.textColor = [UIColor whiteColor];
+    _statusLabel.textAlignment = NSTextAlignmentCenter;
+    _statusLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
+    [self.view addSubview:_statusLabel];
+    
+    _micButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _micButton.frame = CGRectMake((screenW - 80)/2, screenH - 120, 80, 80);
+    _micButton.layer.cornerRadius = 40;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
+    
+    UIImage *micImg = nil;
+    if (@available(iOS 13.0, *)) {
+        micImg = [UIImage systemImageNamed:@"mic.fill"];
+    }
+    if (micImg) {
+        [_micButton setImage:micImg forState:UIControlStateNormal];
+        _micButton.tintColor = [UIColor whiteColor];
+    } else {
+        [_micButton setTitle:@"🎤" forState:UIControlStateNormal];
+    }
+    [_micButton addTarget:self action:@selector(micButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_micButton];
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self startVoiceSession];
+    });
+}
+
+- (void)setupMovingBlueLights {
+    CGFloat screenW = CGRectGetWidth(self.view.bounds);
+    CGFloat screenH = CGRectGetHeight(self.view.bounds);
+    
+    _blueLightView1 = [[UIView alloc] initWithFrame:CGRectMake(-50, -50, 300, 300)];
+    _blueLightView1.layer.cornerRadius = 150;
+    _blueLightView1.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.8 alpha:0.35];
+    _blueLightView1.clipsToBounds = YES;
+    [self.view addSubview:_blueLightView1];
+    
+    _blueLightView2 = [[UIView alloc] initWithFrame:CGRectMake(screenW - 250, screenH - 250, 350, 350)];
+    _blueLightView2.layer.cornerRadius = 175;
+    _blueLightView2.backgroundColor = [UIColor colorWithRed:0.1 green:0.7 blue:0.9 alpha:0.3];
+    [self.view addSubview:_blueLightView2];
+    
+    [UIView animateKeyframesWithDuration:8.0 delay:0 options:UIViewKeyframeAnimationOptionAutoreverse | UIViewKeyframeAnimationOptionRepeat animations:^{
+        [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.5 animations:^{
+            self->_blueLightView1.frame = CGRectMake(screenW - 200, screenH / 3, 350, 350);
+            self->_blueLightView2.frame = CGRectMake(50, 100, 300, 300);
+        }];
+        [UIView addKeyframeWithRelativeStartTime:0.5 relativeDuration:0.5 animations:^{
+            self->_blueLightView1.frame = CGRectMake(50, screenH - 300, 320, 320);
+            self->_blueLightView2.frame = CGRectMake(screenW - 250, 80, 360, 360);
+        }];
+    } completion:nil];
+}
+
+- (void)closeTapped {
+    if (self.chatController.voiceManager) {
+        [self.chatController.voiceManager stopRecording];
+        [self.chatController.voiceManager stopSpeaking];
+    }
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)startVoiceSession {
+    if (!self.chatController.voiceManager) {
+        self.chatController.voiceManager = [VoiceChatManager shared];
+    }
+    
+    _statusLabel.text = @"Đang lắng nghe...";
+    _isListening = YES;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.2 alpha:1.0];
+    
+    __weak typeof(self) weakSelf = self;
+    [self.chatController.voiceManager requestAuthorization:^(BOOL granted) {
+        if (!granted) {
+            _statusLabel.text = @"Cần quyền microphone.";
+            return;
+        }
+        [weakSelf.chatController.voiceManager startRecordingWithPartial:^(NSString *text) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (text.length > 0) {
+                    _statusLabel.text = text;
+                }
+            });
+        } final:^(NSString *text) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (text.length > 0) {
+                    _statusLabel.text = [NSString stringWithFormat:@"Đã gửi: %@", text];
+                    [weakSelf sendVoiceTextToAI:text];
+                } else {
+                    _statusLabel.text = @"Không nghe rõ, thử lại nhé.";
+                    [weakSelf resetMicButtonState];
+                }
+            });
+        } error:^(NSString *msg) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                _statusLabel.text = msg ?: @"Lỗi ghi âm.";
+                [weakSelf resetMicButtonState];
+            });
+        }];
+    }];
+}
+
+- (void)micButtonTapped {
+    if (_isListening) {
+        [self.chatController.voiceManager stopRecording];
+        _isListening = NO;
+        [self resetMicButtonState];
+    } else {
+        [self startVoiceSession];
+    }
+}
+
+- (void)resetMicButtonState {
+    _isListening = NO;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
+}
+
+- (void)sendVoiceTextToAI:(NSString *)text {
+    _statusLabel.text = @"AI đang suy nghĩ...";
+    self.chatController.textView.text = text;
+    [self.chatController textViewDidChange:self.chatController.textView];
+    [self.chatController sendTapped];
+}
+
+@end
+
 #pragma mark - ChatViewController
 
 @interface ChatViewController () <WKNavigationDelegate, ScriptMessageTarget, UITextViewDelegate,
@@ -104,14 +282,13 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UITextView *textView;
 @property (strong, nonatomic) UILabel *placeholderLabel;
 @property (strong, nonatomic) UIButton *sendButton;
-@property (strong, nonatomic) VoiceChatManager *voiceManager;
 @property (assign, nonatomic) BOOL voiceRecording;
 @property (assign, nonatomic) BOOL lastWasStreaming;
 @property (strong, nonatomic) UIButton *modelButton;
 @property (assign, nonatomic) BOOL pendingModelPopup;
 @property (assign, nonatomic) BOOL pendingModelPopupIntro;
-@property (strong, nonatomic) UIImageView *wallpaperView;   // chat wallpaper, behind the (transparent) web page
-@property (strong, nonatomic) UIView *dimView;                 // darkens the wallpaper in dark mode
+@property (strong, nonatomic) UIImageView *wallpaperView;   
+@property (strong, nonatomic) UIView *dimView;                 
 @property (assign, nonatomic) CGFloat keyboardOverlap;
 
 @property (strong, nonatomic) NSMutableDictionary *conversation;
@@ -119,18 +296,18 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) id<ChatStreaming> stream;
 @property (assign, nonatomic) BOOL streaming;
 @property (assign, nonatomic) CFAbsoluteTime requestStartTime;
-@property (assign, nonatomic) NSUInteger greetingIndex;     // which of the kGreetingCount lines this empty chat shows
-@property (copy, nonatomic) NSString *shownGreeting;        // what the page currently shows, to avoid redrawing for nothing
-@property (assign, nonatomic) BOOL attemptIsStreaming;   // the current request is a live stream (vs. single-shot fallback)
+@property (assign, nonatomic) NSUInteger greetingIndex;     
+@property (copy, nonatomic) NSString *shownGreeting;        
+@property (assign, nonatomic) BOOL attemptIsStreaming;   
 @property (assign, nonatomic) NSInteger streamRetryCount;
 @property (assign, nonatomic) BOOL didRecoverModel404;
 @property (assign, nonatomic) BOOL didFallbackFromFastMode;
 @property (strong, nonatomic) NSMutableString *streamBuffer;
-@property (strong, nonatomic) NSMutableString *longReplyAccumulator; // completed chunks from provider output-limit continuations
+@property (strong, nonatomic) NSMutableString *longReplyAccumulator; 
 @property (assign, nonatomic) NSUInteger longReplyContinuationCount;
 @property (strong, nonatomic) NSMutableArray *streamGeneratedAttachments;
 
-@property (strong, nonatomic) NSMutableArray *pendingAttachments;   // attachments waiting to be sent with the next message
+@property (strong, nonatomic) NSMutableArray *pendingAttachments;   
 @property (assign, nonatomic) NSInteger importsInFlight;
 @end
 
@@ -169,7 +346,6 @@ static NSString *ClippedForLog(NSString *text) {
     [center addObserver:self selector:@selector(conversationDeleted:) name:kNotifConversationDeleted object:nil];
     [center addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
 
-    // Attachment folders left behind by chats that were never saved (e.g. the app was closed with files attached).
     NSMutableSet *keep = [NSMutableSet set];
     for (NSDictionary *entry in [ConversationStore allEntries]) {
         if (entry[@"id"]) [keep addObject:entry[@"id"]];
@@ -188,7 +364,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self loadWebPage];
     [self refreshModels];
 
-    // If the chat page never reports in, tell the user instead of showing a blank screen.
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         ChatViewController *me = weakSelf;
@@ -205,7 +380,7 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self ensureModelMatchesKeys];   // a key may have been added or removed in Settings
+    [self ensureModelMatchesKeys];   
     [self updateModelTitle];
     [self updateDailyTokenPrompt];
     [self updateToolButtons];
@@ -235,7 +410,6 @@ static NSString *ClippedForLog(NSString *text) {
     [controller addScriptMessageHandler:[[WeakScriptHandler alloc] initWithTarget:self] name:@"native"];
     config.userContentController = controller;
 
-    // The wallpaper sits behind the web page; the page itself is transparent so the wallpaper (or the plain skin colour) shows through.
     self.wallpaperView = [[UIImageView alloc] init];
     self.wallpaperView.contentMode = UIViewContentModeScaleAspectFill;
     self.wallpaperView.clipsToBounds = YES;
@@ -353,14 +527,13 @@ static NSString *ClippedForLog(NSString *text) {
 
     CGFloat boxWidth = width - 24;
     BOOL searchActive = [AppSettings webSearchEnabled];
-    CGFloat leftPad = 40;     // room for the attach button
-    CGFloat rightPad = 44;    // room for the send button
+    CGFloat leftPad = 40;     
+    CGFloat rightPad = 44;    
     CGFloat textWidth = boxWidth - leftPad - rightPad;
     CGFloat fit = [self.textView sizeThatFits:CGSizeMake(textWidth, CGFLOAT_MAX)].height;
     CGFloat textHeight = MIN(MAX(fit, 38), kMaxInputHeight);
     self.textView.scrollEnabled = fit > kMaxInputHeight;
 
-    // Search is shown as a compact removable chip in its own first line of the composer.
     CGFloat searchRowHeight = searchActive ? 27.0 : 0.0;
     CGFloat boxHeight = textHeight + 8 + searchRowHeight;
     CGFloat toolsY = 8 + stripHeight;
@@ -418,7 +591,7 @@ static NSString *ClippedForLog(NSString *text) {
     [self.reasoningButton setTitleColor:active forState:UIControlStateNormal];
     [self.searchButton setTitleColor:[AppSettings webSearchEnabled] ? active : [Theme secondaryText] forState:UIControlStateNormal];
     BOOL supportsFast = [self currentModelSupportsFastMode];
-    self.fastButton.enabled = YES; // Unsupported models remain tappable so the UI can explain the limitation.
+    self.fastButton.enabled = YES; 
     self.fastButton.alpha = supportsFast ? 1.0 : 0.42;
     [self.fastButton setTitleColor:(supportsFast && [AppSettings fastModeEnabled]) ? active : [Theme secondaryText] forState:UIControlStateNormal];
     NSString *level = @[@"Thấp", @"Trung bình", @"Cao", @"Siêu cao", @"MAX ×8"][(NSUInteger)[AppSettings reasoningLevel]];
@@ -570,8 +743,6 @@ static NSString *ClippedForLog(NSString *text) {
         NSDictionary *message = recent[(NSUInteger)i];
         if (![message[@"role"] isEqualToString:@"user"] && [message[@"text"] isKindOfClass:[NSString class]] && [message[@"text"] length] > 0) { lastReply = message[@"text"]; break; }
     }
-    // Always show file-creation commands. If there is no assistant reply yet, use the
-    // draft currently in the input box instead of hiding these actions from the @ menu.
     [sheet addAction:[UIAlertAction actionWithTitle:@"Tạo tệp TXT" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         NSString *source = lastReply.length > 0 ? lastReply : [weakSelf trimmedInput];
         if (source.length > 0) [weakSelf exportText:source asWord:NO];
@@ -604,7 +775,7 @@ static NSString *ClippedForLog(NSString *text) {
 }
 
 - (void)updateDailyTokenPrompt {
-    self.navigationItem.prompt = nil;   // the "Token hôm nay" line is no longer shown
+    self.navigationItem.prompt = nil;   
 }
 
 - (void)relayoutAnimated {
@@ -647,7 +818,7 @@ static NSString *ClippedForLog(NSString *text) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     UIViewController *top = self;
-    while (top.presentedViewController) top = top.presentedViewController;   // a picker may still be on screen
+    while (top.presentedViewController) top = top.presentedViewController;   
     [top presentViewController:alert animated:YES completion:nil];
 }
 
@@ -660,14 +831,10 @@ static NSString *ClippedForLog(NSString *text) {
     return text ?: @"";
 }
 
-// The page is assembled in memory and loaded as a string, so WebKit never needs file access
-// to the app bundle (which is the fragile part for unsandboxed jailbreak apps).
 - (void)loadWebPage {
     self.webReady = NO;
     NSString *html = [self resourceText:@"index" ext:@"html"];
-    // The skin goes in first, before the (large) CSS and JS are inserted.
     html = [html stringByReplacingOccurrencesOfString:@"{{THEME}}" withString:[Theme webThemeCSS]];
-    // Order matters: the libraries first (markdown-it, highlight.js, KaTeX), then our renderer, then the chat page itself.
     NSString *css = [[self resourceText:@"vendor" ext:@"css"] stringByAppendingFormat:@"\n%@", [self resourceText:@"chat" ext:@"css"]];
     NSString *js = [NSString stringWithFormat:@"%@\n%@\n%@", [self resourceText:@"vendor" ext:@"js"],
                                               [self resourceText:@"render" ext:@"js"], [self resourceText:@"chat" ext:@"js"]];
@@ -689,7 +856,6 @@ static NSString *ClippedForLog(NSString *text) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:args options:0 error:nil];
     if (!data) return;
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    // U+2028 / U+2029 are legal in JSON but break JavaScript string literals in older WebKit.
     json = [json stringByReplacingOccurrencesOfString:@"\u2028" withString:@"\\u2028"];
     json = [json stringByReplacingOccurrencesOfString:@"\u2029" withString:@"\\u2029"];
     NSString *script = [NSString stringWithFormat:@"ChatUI.%@.apply(null,%@);", function, json];
@@ -698,7 +864,6 @@ static NSString *ClippedForLog(NSString *text) {
 
 #pragma mark - Skin
 
-// Restyles everything on this screen for the current skin, light/dark mode and wallpaper.
 - (void)applyTheme {
     self.view.backgroundColor = [Theme background];
 
@@ -727,14 +892,13 @@ static NSString *ClippedForLog(NSString *text) {
     }
     [self updateToolButtons];
     [self updateSendButton];
-    if (self.pendingAttachments.count > 0 || self.importsInFlight > 0) [self refreshAttachStrip];   // chips were drawn with the old colours
+    if (self.pendingAttachments.count > 0 || self.importsInFlight > 0) [self refreshAttachStrip];   
 
     [self setNeedsStatusBarAppearanceUpdate];
     [self pushThemeToWeb];
     [self.view setNeedsLayout];
 }
 
-// Swaps the skin's CSS in the chat page (the page keeps its messages and scroll position).
 - (void)pushThemeToWeb {
     if (!self.webReady) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:@[[Theme webThemeCSS]] options:0 error:nil];
@@ -746,8 +910,6 @@ static NSString *ClippedForLog(NSString *text) {
 
 #pragma mark - Greeting
 
-// By the device's clock: 03:00-10:59 morning, 11:00-13:59 midday, 14:00-17:59 afternoon,
-// 18:00-22:59 evening, 23:00-02:59 night owl.
 - (NSString *)greetingTitle {
     NSInteger hour = [[NSCalendar currentCalendar] component:NSCalendarUnitHour fromDate:[NSDate date]];
     if (hour >= 23 || hour < 3) return L(@"greeting_night");
@@ -768,7 +930,6 @@ static NSString *ClippedForLog(NSString *text) {
     }
 }
 
-// A new empty chat gets a different line than the previous one.
 - (void)rerollGreeting {
     NSUInteger previous = self.greetingIndex;
     NSUInteger next = previous;
@@ -776,7 +937,6 @@ static NSString *ClippedForLog(NSString *text) {
     self.greetingIndex = next;
 }
 
-// The empty chat is still showing: redraw it when the time of day (and so the greeting) has changed.
 - (void)refreshGreetingIfEmpty {
     if (!self.webReady || [self.conversation[@"messages"] count] > 0) return;
     NSString *current = [NSString stringWithFormat:@"%@|%@", [self greetingTitle], [self greetingSubtitle]];
@@ -804,7 +964,6 @@ static NSString *ClippedForLog(NSString *text) {
                                           @"thinking": ([AppSettings reasoningLevel] >= AIReasoningLevelHigh) ? @"Đang suy luận sâu…" : @"Đang xử lý…" }]];
 }
 
-// What the page needs to draw a message's attachments: kind, name, and a small thumbnail for photos.
 - (NSArray *)webAttachmentsFrom:(NSArray *)attachments conversation:(NSString *)cid {
     NSMutableArray *out = [NSMutableArray array];
     if (![attachments isKindOfClass:[NSArray class]]) return out;
@@ -917,7 +1076,6 @@ static NSString *ClippedForLog(NSString *text) {
     [self presentViewController:activity animated:YES completion:nil];
 }
 
-// Opens the stored (2048 px) photo of a message in the full-screen viewer.
 - (void)showImageForAttachmentId:(NSString *)attachmentId {
     if (![attachmentId isKindOfClass:[NSString class]] || attachmentId.length == 0) return;
     NSString *cid = self.conversation[@"id"];
@@ -958,7 +1116,6 @@ static NSString *ClippedForLog(NSString *text) {
     [DiagnosticLog log:@"web view failed to start: %@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
 }
 
-// iOS may kill the web process under memory pressure (the iPhone 6 has 1 GB). Rebuild the page.
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
     [DiagnosticLog log:@"web content process was terminated by iOS (probably memory): reloading the page"];
     [self loadWebPage];
@@ -974,18 +1131,16 @@ static NSString *ClippedForLog(NSString *text) {
     self.modelButton.frame = CGRectMake(0, 0, MIN(ceil(size.width) + 8, maxWidth), 44);
 }
 
-// The chosen model must belong to a provider that has a key. Otherwise pick a default from one that does.
 - (void)ensureModelMatchesKeys {
     BOOL usable = self.model.length > 0 && [KeyStore hasKeyForProvider:[Provider forModelId:self.model]];
     if (usable) return;
-    NSString *fallback = [ModelStore defaultModelIdAcrossProviders];   // nil until a model list has been fetched
+    NSString *fallback = [ModelStore defaultModelIdAcrossProviders];   
     self.model = fallback;
     if (fallback.length > 0) [ModelStore setSelectedModelId:fallback];
     self.conversation[@"model"] = fallback ?: @"";
     [self updateModelTitle];
 }
 
-// Fetches the model list of every provider that has a key (in the background) and keeps the choice valid.
 - (void)refreshModels {
     for (NSNumber *value in [Provider all]) {
         AIProvider provider = (AIProvider)value.integerValue;
@@ -1066,6 +1221,7 @@ static NSString *ClippedForLog(NSString *text) {
     }
     if ([KeyTier consumePopupPending]) [self presentModelPopupIntro:YES];
 }
+
 #pragma mark - Navigation buttons
 
 - (void)historyTapped {
@@ -1089,7 +1245,6 @@ static NSString *ClippedForLog(NSString *text) {
     if ([cid isEqualToString:self.conversation[@"id"]]) [self startNewChat];
 }
 
-// Files picked for a message that was never sent belong to the conversation being left behind.
 - (void)discardPendingAttachments {
     NSString *cid = self.conversation[@"id"];
     for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
@@ -1102,7 +1257,7 @@ static NSString *ClippedForLog(NSString *text) {
     [self discardPendingAttachments];
     self.conversation = [ConversationStore newConversationWithModel:self.model];
     [self rerollGreeting];
-    [self pushStrings];   // a fresh greeting for the fresh chat
+    [self pushStrings];   
     [self callJS:@"clear" args:@[]];
     [self updateSendButton];
 }
@@ -1152,14 +1307,23 @@ static NSString *ClippedForLog(NSString *text) {
         [self.sendButton setTitle:nil forState:UIControlStateNormal];
         self.sendButton.backgroundColor = canSend ? [Theme accent] : [Theme accentDisabled];
     } else {
-        // O trong: hien micro (chat bang giong noi); khi co chu se tu doi thanh mui ten gui
-        [self.sendButton setImage:nil forState:UIControlStateNormal];
-        [self.sendButton setTitle:@"🎤" forState:UIControlStateNormal];
+        // Ô trống: thay emoji bằng icon mic chuẩn (SF Symbols hoặc fallback)
+        UIImage *micImg = nil;
+        if (@available(iOS 13.0, *)) {
+            micImg = [UIImage systemImageNamed:@"mic.fill"];
+        }
+        if (micImg) {
+            [self.sendButton setImage:micImg forState:UIControlStateNormal];
+            [self.sendButton setTitle:nil forState:UIControlStateNormal];
+            self.sendButton.tintColor = [Theme text];
+        } else {
+            [self.sendButton setImage:nil forState:UIControlStateNormal];
+            [self.sendButton setTitle:@"🎤" forState:UIControlStateNormal];
+        }
         self.sendButton.backgroundColor = [Theme accent];
     }
     self.attachButton.enabled = !self.streaming;
     self.attachButton.alpha = self.streaming ? 0.4 : 1.0;
-    // Vua ket thuc streaming (AI vua tra loi xong) -> tu doc bang giong noi neu bat
     if (self.lastWasStreaming && !self.streaming) {
         if ([AppSettings voiceAutoPlayEnabled]) [self speakLastAssistantMessage];
     }
@@ -1173,40 +1337,98 @@ static NSString *ClippedForLog(NSString *text) {
     [self.webView evaluateJavaScript:[NSString stringWithFormat:@"document.documentElement.style.setProperty('--uiscale','%.3f');", sc] completionHandler:nil];
 }
 
-#pragma mark - Voice chat (giong noi)
+#pragma mark - Voice chat & Voice Selection Popup (Bung hình chữ nhật từ phải qua trái)
 
-- (void)toggleVoiceRecording {
-    if (self.voiceRecording) {
-        [self.voiceManager stopRecording];
-        self.voiceRecording = NO;
-        [self updateSendButton];
-        return;
+- (void)showVoiceSelectionPopup {
+    if ([self.view viewWithTag:9988]) return;
+    
+    CGFloat screenW = CGRectGetWidth(self.view.bounds);
+    CGFloat screenH = CGRectGetHeight(self.view.bounds);
+    
+    UIView *overlay = [[UIView alloc] initWithFrame:self.view.bounds];
+    overlay.tag = 9988;
+    overlay.backgroundColor = [UIColor clearColor];
+    
+    UIButton *dismissBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    dismissBtn.frame = overlay.bounds;
+    [dismissBtn addTarget:self action:@selector(dismissVoicePopup) forControlEvents:UIControlEventTouchUpInside];
+    [overlay addSubview:dismissBtn];
+    
+    CGFloat menuW = 230;
+    CGFloat menuH = 170;
+    CGFloat bottomBarY = CGRectGetMinY(self.inputBar.frame);
+    CGFloat startX = screenW - 12 - 36 - menuW;
+    CGFloat startY = bottomBarY - menuH - 8;
+    
+    // Khởi tạo khung hình chữ nhật ban đầu tại vị trí nút mic (nhỏ gọn để hiệu ứng bung từ phải qua trái)
+    UIView *menuCard = [[UIView alloc] initWithFrame:CGRectMake(screenW - 12 - 36, startY + menuH/2, 0, 0)];
+    menuCard.tag = 9989;
+    menuCard.backgroundColor = [Theme surface];
+    menuCard.layer.cornerRadius = 16;
+    menuCard.layer.borderWidth = 1;
+    menuCard.layer.borderColor = [Theme border].CGColor;
+    menuCard.clipsToBounds = YES;
+    menuCard.layer.shadowColor = [UIColor blackColor].CGColor;
+    menuCard.layer.shadowOpacity = 0.25;
+    menuCard.layer.shadowRadius = 12;
+    menuCard.layer.shadowOffset = CGSizeMake(-4, 4);
+    [overlay addSubview:menuCard];
+    
+    UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, menuW - 32, 24)];
+    titleLbl.text = @"Chọn giọng nói AI";
+    titleLbl.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    titleLbl.textColor = [Theme text];
+    [menuCard addSubview:titleLbl];
+    
+    NSArray *voices = @[@"1. Giọng nữ tự nhiên", @"2. Giọng nam trầm ấm", @"3. Giọng biểu cảm"];
+    CGFloat rowY = 42;
+    for (NSInteger i = 0; i < voices.count; i++) {
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        btn.frame = CGRectMake(12, rowY, menuW - 24, 36);
+        btn.backgroundColor = [Theme background];
+        btn.layer.cornerRadius = 8;
+        [btn setTitle:voices[i] forState:UIControlStateNormal];
+        [btn setTitleColor:[Theme text] forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        btn.tag = 100 + i;
+        [btn addTarget:self action:@selector(voiceOptionSelected:) forControlEvents:UIControlEventTouchUpInside];
+        [menuCard addSubview:btn];
+        rowY += 40;
     }
-    if (!self.voiceManager) self.voiceManager = [VoiceChatManager shared];
-    __weak typeof(self) weakSelf = self;
-    [self.voiceManager requestAuthorization:^(BOOL granted) {
-        if (!granted) { [weakSelf showAlertMessage:@"Can quyen micro va nhan dang giong noi. Hay bat trong Cai dat > Rieng tu."]; return; }
-        [weakSelf.voiceManager startRecordingWithPartial:^(NSString *text) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (text.length > 0) { weakSelf.textView.text = text; [weakSelf textViewDidChange:weakSelf.textView]; }
-            });
-        } final:^(NSString *text) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                weakSelf.voiceRecording = NO;
-                if (text.length > 0) { weakSelf.textView.text = text; }
-                [weakSelf textViewDidChange:weakSelf.textView];
-                [weakSelf updateSendButton];
-            });
-        } error:^(NSString *msg) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                weakSelf.voiceRecording = NO;
-                [weakSelf updateSendButton];
-                if (msg.length > 0) [weakSelf showAlertMessage:msg];
-            });
-        }];
-        weakSelf.voiceRecording = YES;
-        [weakSelf updateSendButton];
+    
+    [self.view addSubview:overlay];
+    
+    // Hiệu ứng bung ra hình chữ nhật từ phải qua trái mượt mà
+    [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        menuCard.frame = CGRectMake(startX, startY, menuW, menuH);
+    } completion:nil];
+}
+
+- (void)dismissVoicePopup {
+    UIView *overlay = [self.view viewWithTag:9988];
+    if (!overlay) return;
+    UIView *menuCard = [overlay viewWithTag:9989];
+    [UIView animateWithDuration:0.20 animations:^{
+        menuCard.alpha = 0;
+        menuCard.transform = CGAffineTransformMakeScale(0.7, 0.7);
+        overlay.alpha = 0;
+    } completion:^(BOOL finished) {
+        [overlay removeFromSuperview];
     }];
+}
+
+- (void)voiceOptionSelected:(UIButton *)sender {
+    NSInteger voiceIndex = sender.tag - 100;
+    [self dismissVoicePopup];
+    [self presentFullScreenVoiceChatWithVoiceIndex:voiceIndex];
+}
+
+- (void)presentFullScreenVoiceChatWithVoiceIndex:(NSInteger)voiceIndex {
+    VoiceChatFullScreenViewController *vc = [[VoiceChatFullScreenViewController alloc] init];
+    vc.modalPresentationStyle = UIModalPresentationFullScreen;
+    vc.selectedVoiceIndex = voiceIndex;
+    vc.chatController = self;
+    [self presentViewController:vc animated:YES completion:nil];
 }
 
 - (void)speakLastAssistantMessage {
@@ -1372,16 +1594,16 @@ static NSString *ClippedForLog(NSString *text) {
             return;
         }
         switch (item) {
-            case 0: // Photos — multi-select up to the configured per-message limit
+            case 0:
                 [DiagnosticLog log:@"attach menu: photos"];
                 [me presentPhotoLibraryPicker];
                 break;
-            case 1: // Files
-            case 2: // Library browser
+            case 1:
+            case 2:
                 [DiagnosticLog log:@"attach menu: document picker"];
                 [me presentDocumentPicker];
                 break;
-            case 3: // Camera
+            case 3:
                 if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
                     [DiagnosticLog log:@"attach menu: camera"];
                     [me presentImagePickerWithSource:UIImagePickerControllerSourceTypeCamera];
@@ -1389,18 +1611,18 @@ static NSString *ClippedForLog(NSString *text) {
                     [me showAlertMessage:@"Camera không khả dụng trên thiết bị này."];
                 }
                 break;
-            case 4: // Web search
+            case 4:
                 [AppSettings setWebSearchEnabled:![AppSettings webSearchEnabled]];
                 [me updateToolButtons];
                 [me relayoutAnimated];
                 break;
-            case 5: // Reasoning
+            case 5:
                 [me reasoningTapped];
                 break;
-            case 6: // More tools
+            case 6:
                 [me mentionTapped];
                 break;
-            case 7: // Image generation command
+            case 7:
                 me.textView.text = @"/tạo ảnh ";
                 [me textViewDidChange:me.textView];
                 [me.textView becomeFirstResponder];
@@ -1563,7 +1785,7 @@ static NSString *ClippedForLog(NSString *text) {
         return;
     }
 
-    self.importsInFlight += (NSInteger)count; // reserve slots before asynchronous PhotoKit loads finish
+    self.importsInFlight += (NSInteger)count; 
     [self refreshAttachStrip];
     [self updateSendButton];
     __weak typeof(self) weakSelf = self;
@@ -1599,8 +1821,8 @@ static NSString *ClippedForLog(NSString *text) {
 
 - (void)imagePickerController:(UIImagePickerController *)picker
 didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
-    NSURL *imageURL = info[UIImagePickerControllerImageURL];      // photo library picks come as a file
-    UIImage *original = info[UIImagePickerControllerOriginalImage];   // camera shots come as an image in memory
+    NSURL *imageURL = info[UIImagePickerControllerImageURL];      
+    UIImage *original = info[UIImagePickerControllerOriginalImage];   
     [picker dismissViewControllerAnimated:YES completion:nil];
 
     [self runImportWithWork:^NSDictionary *(NSString *cid, NSString **errorKey) {
@@ -1632,7 +1854,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark Import pipeline
 
-// Decoding, resizing and unzipping happen off the main thread; the chip shows a spinner meanwhile.
 - (void)runImportWithWork:(NSDictionary *(^)(NSString *cid, NSString **errorKey))work {
     NSString *cid = self.conversation[@"id"];
     self.importsInFlight++;
@@ -1655,7 +1876,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     if (attachment) {
         if (![cid isEqualToString:self.conversation[@"id"]]) {
-            // The person switched chats while the file was being processed: it belongs to a conversation they left.
             [AttachmentStore deleteAttachment:attachment conversation:cid];
         } else if ((NSInteger)self.pendingAttachments.count >= kMaxAttachmentsPerMessage) {
             [AttachmentStore deleteAttachment:attachment conversation:cid];
@@ -1688,13 +1908,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *text = [self trimmedInput];
     BOOL hasAttachments = self.pendingAttachments.count > 0;
     if (text.length == 0 && !hasAttachments) {
-        [self toggleVoiceRecording];   // nut dang la micro: bat/tat ghi am giong noi
+        [self showVoiceSelectionPopup];   // Nút mic: hiển thị menu chọn giọng nói bung từ phải qua trái
         return;
     }
     if (!self.webReady || self.importsInFlight > 0) return;
 
-    // /tạo ảnh explicitly routes to a Gemini image-generation model. Do not silently
-    // send this command to a normal text-only model and pretend an image was generated.
     NSString *lowerText = text.lowercaseString;
     if ([lowerText hasPrefix:@"/tạo ảnh"]) {
         NSString *imagePrompt = [[text substringFromIndex:([@"/tạo ảnh" length])] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -1771,10 +1989,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark - Request contents
 
-// Turns the saved messages into provider-neutral "turns" (the stream class converts them to Gemini's or Claude's JSON).
-// Attachments become parts that come before the typed text:
-//   photos, sampled video frames and PDFs -> base64 data, as long as they fit in the size budget (newest first)
-//   text/Word/PPT                      -> the extracted text
 - (void)addPartsForAttachment:(NSDictionary *)att
                  conversation:(NSString *)cid
                     inlineIds:(NSSet *)inlineIds
@@ -1828,9 +2042,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *cid = self.conversation[@"id"];
     NSArray *messages = self.conversation[@"messages"];
 
-    // Photos, video keyframes and PDFs are re-sent with each request, which costs quota. Only the newest media
-    // messages (as many as the setting allows, 0 = all) include their data, within the byte budget; older ones
-    // become a short note. Text taken from Word/PowerPoint/text files is not affected.
     NSInteger memory = [AppSettings attachmentMemory];
     NSInteger mediaMessages = 0;
     NSMutableSet *inlineIds = [NSMutableSet set];
@@ -1857,8 +2068,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Both providers expect alternating roles, so merge consecutive messages from the same side.
-    // (The history file stores the assistant as "model"; the neutral turns call it "assistant".)
     NSMutableArray *turns = [NSMutableArray array];
     for (NSDictionary *message in messages) {
         NSString *role = message[@"role"];
@@ -1880,8 +2089,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
     }
 
-    // Respect both the user's chosen history size and the selected model's published input limit.
-    // The conversion is deliberately conservative because characters are only an estimate of tokens.
     NSUInteger contextLimit = [AppSettings contextLimitChars];
     AIProvider provider = [Provider forModelId:self.model];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
@@ -1891,16 +2098,12 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         modelCharCap = modelCharCap > reservedChars ? modelCharCap - reservedChars : 4096;
         contextLimit = MIN(contextLimit, modelCharCap);
     } else {
-        // The cached model list may predate token metadata. Limit history until the user refreshes that list.
         contextLimit = MIN(contextLimit, (NSUInteger)32000);
     }
 
-    // Drop the oldest turns first, and never start with an assistant turn.
     while (turns.count > 1 && [self totalTextChars:turns] > contextLimit) [turns removeObjectAtIndex:0];
     while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
 
-    // A single very long newest turn cannot be dropped wholesale. Trim its oldest text while preserving the tail
-    // (which normally contains the current question) so the request still fits the selected model's estimate.
     if (turns.count == 1 && [self totalTextChars:turns] > contextLimit) {
         NSMutableArray *parts = turns.firstObject[@"parts"];
         NSString *marker = @"[Earlier text omitted to fit the model context]\n";
@@ -1917,7 +2120,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                 continue;
             }
 
-            // Account for every other text part (especially the current question) before choosing the tail size.
             NSUInteger otherChars = total - content.length;
             NSUInteger available = contextLimit > otherChars + marker.length
                 ? contextLimit - otherChars - marker.length : 0;
@@ -1949,7 +2151,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
 #pragma mark - Streaming
 
-// Explains what is missing when the chosen model's provider has no key (for example a Claude model after its key was deleted).
 - (BOOL)checkKeyForCurrentModel {
     AIProvider provider = [Provider forModelId:self.model];
     if ([KeyStore hasKeyForProvider:provider]) return YES;
@@ -1971,14 +2172,10 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self launchRequestStreaming:YES];
 }
 
-// Instructions of this conversation if it has its own, otherwise the general ones from Settings.
 - (NSString *)effectiveSystemPrompt {
     NSString *own = self.conversation[@"system"];
     NSString *prompt = ([own isKindOfClass:[NSString class]] && own.length > 0) ? own : [AppSettings systemPrompt];
     NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
-    // The complete prompt (up to 1M chars) stays on-device. Only a compact, query-selected
-    // excerpt is sent per request. A hard cap keeps long custom instructions from making
-    // requests unnecessarily slow or oversized; 404 is handled separately as a model/path error.
     NSUInteger promptBudget = inputTokenCap > 0
         ? MIN((NSUInteger)48000, MAX((NSUInteger)6000, ((NSUInteger)inputTokenCap * 2) / 5))
         : 16000;
@@ -2010,7 +2207,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     return selectedPrompt;
 }
 
-// Counts only: never the text itself.
 - (NSString *)summaryOfTurns:(NSArray *)turns {
     NSUInteger images = 0, pdfs = 0, mediaChars = 0, textChars = 0;
     for (NSDictionary *turn in turns) {
@@ -2032,8 +2228,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSMutableArray *turns = [[self buildTurns] mutableCopy];
     NSString *system = [self effectiveSystemPrompt];
     if (self.longReplyAccumulator.length > 0) {
-        // Continue from the exact accumulated output. Keep the provider conversation
-        // format valid (assistant -> user) and prune only older context if needed.
         [turns addObject:[@{ @"role": @"assistant", @"parts": @[@{ @"type": @"text", @"text": [self.longReplyAccumulator copy] }] } mutableCopy]];
         NSString *continueInstruction = @"Continue the response exactly where the previous assistant message ended. Do not repeat, summarize, shorten, or rewrite any text already provided. If writing code, continue the same file/code block with identical indentation and complete syntax; include every remaining line, declaration, implementation, and closing delimiter. Do not replace code with placeholders or ellipses. Finish the original request fully.";
         [turns addObject:[@{ @"role": @"user", @"parts": @[@{ @"type": @"text", @"text": continueInstruction }] } mutableCopy]];
@@ -2069,7 +2263,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         ChatViewController *me = weakSelf;
         if (!me || me.stream != weakStream || data.length == 0) return;
         NSString *errorKey = nil;
-        NSString *imageName = @"generated-image.jpg"; // AttachmentStore normalizes all imported images to JPEG.
+        NSString *imageName = @"generated-image.jpg"; 
         NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
                                                          conversation:me.conversation[@"id"] errorKey:&errorKey];
         if (attachment) {
@@ -2102,8 +2296,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     AIProvider currentProvider = [Provider forModelId:self.model];
     if (error == GeminiStreamErrorNone && status == 200 && [detail isEqualToString:@"__OUTPUT_LIMIT_REACHED__"] && partial.length > 0) {
-        // Provider stopped only because this response segment reached its output cap.
-        // Automatically request the next segment while keeping one continuous UI bubble.
         const NSUInteger kMaxAutomaticContinuations = 10;
         NSInteger continuationInputCap = [ModelStore maxInputTokensForModelId:self.model provider:currentProvider];
         NSUInteger continuationCharCap = continuationInputCap > 0 ? (NSUInteger)continuationInputCap * 2 : 64000;
@@ -2133,8 +2325,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     BOOL largeClaudeReply = currentProvider == AIProviderClaude &&
         (configuredOutputCap > 21333 || (configuredOutputCap == 0 && claudeModelOutputCap > 21333));
 
-    // Classify permanent daily/billing quota errors before fallback so Fast mode
-    // cannot trigger an unnecessary second request when the account is blocked.
     NSString *lowerDetail = detail.lowercaseString ?: @"";
     BOOL permanentQuota = status == 429 &&
         ([lowerDetail containsString:@"per day"] || [lowerDetail containsString:@"per_day"] ||
@@ -2145,8 +2335,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
          [lowerDetail containsString:@"spend cap"] || [lowerDetail containsString:@"usage limit"] ||
          [lowerDetail containsString:@"payment"] || [lowerDetail containsString:@"quota_exceeded"]);
 
-    // A Fast-mode 429/529 can be caused by the separate speed pool. Retry once
-    // at standard speed only for transient Fast capacity errors, never for a daily/spend cap.
     BOOL wasFastRequest = currentProvider == AIProviderClaude && self.stream && ((ClaudeStream *)self.stream).useFastSpeed;
     NSString *fastErrorText = lowerDetail;
     BOOL fastRateLimited = wasFastRequest && !permanentQuota && (status == 429 || status == 529);
@@ -2158,7 +2346,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         NSTimeInterval fastRetryAfter = self.stream.retryAfterSeconds;
         self.stream = nil;
         if (fastRejected) {
-            // The account/model may not have Fast-mode entitlement; stop requesting it on later turns.
             [AppSettings setFastModeEnabled:NO];
             [self updateToolButtons];
         }
@@ -2172,8 +2359,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
-    // Transient provider overloads (500/502/503/504/529) are retried with exponential
-    // backoff only before any content arrives, so a partial answer is never duplicated.
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
     NSInteger retryLimit = status == 429 ? 1 : 3;
@@ -2190,8 +2375,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         return;
     }
 
-    // A 404 often means that a cached model id was removed. Refresh once and switch
-    // only when the provider's live model list no longer contains the selected id.
     if (error == GeminiStreamErrorModelNotFound && status == 404 && partial.length == 0 && !self.didRecoverModel404) {
         self.stream = nil;
         self.didRecoverModel404 = YES;
@@ -2243,7 +2426,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
         self.stream = nil;
         if (largeClaudeReply && self.streamRetryCount < 1) {
-            // Large Claude outputs must remain streamed. Retry the stream once rather than switching to a single response.
             self.streamRetryCount++;
             [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -2252,7 +2434,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             return;
         }
         if (!largeClaudeReply) {
-            // Smaller replies can fall back to a normal response if a long-lived stream fails before any text arrives.
             [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
             [self launchRequestStreaming:NO];
             return;
@@ -2297,7 +2478,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [ConversationStore saveConversation:self.conversation];
 }
 
-// Stops the current reply without touching the UI (used when switching chats); keeps what arrived so far.
 - (void)abandonStream {
     if (!self.stream) return;
     NSString *partial = [self.streamBuffer copy] ?: @"";
@@ -2326,7 +2506,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSDictionary *target = messages[(NSUInteger)index];
     if (![target[@"role"] isEqualToString:@"user"]) return;
 
-    // Remove any unsent draft attachments before restoring the selected message's attachments.
     NSString *cid = self.conversation[@"id"];
     for (NSDictionary *att in self.pendingAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
     [self.pendingAttachments removeAllObjects];
@@ -2334,7 +2513,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
     NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
 
-    // Keep attachments belonging to the edited message; delete files referenced only by later messages.
     for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
         if (i != index) {
             NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
