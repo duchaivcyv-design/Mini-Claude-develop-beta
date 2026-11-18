@@ -21,6 +21,10 @@
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
 @property (assign, nonatomic) long long inputTokenUsage;
 @property (assign, nonatomic) long long outputTokenUsage;
+
+// Biến bổ trợ cho cơ chế Bẻ cưỡng chế retry vô hạn trên cùng 1 Key & Model
+@property (assign, nonatomic) NSInteger sameKeyRetryCount;
+@property (strong, nonatomic) NSMutableURLRequest *savedRequest;
 @end
 
 @implementation GeminiStream
@@ -36,13 +40,13 @@
         _buffer = [NSMutableData data];
         _errorBody = [NSMutableData data];
         _useStreaming = YES;
+        _sameKeyRetryCount = 0;
     }
     return self;
 }
 
 #pragma mark - Request format
 
-// Neutral turns -> Gemini "contents": assistant becomes "model"; photos and PDFs become inline_data.
 + (NSArray *)contentsFromTurns:(NSArray *)turns {
     NSMutableArray *contents = [NSMutableArray array];
     for (NSDictionary *turn in turns) {
@@ -66,6 +70,7 @@
 #pragma mark - Control
 
 - (void)start {
+    self.sameKeyRetryCount = 0;
     NSString *escapedModel = [self.model stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
     NSString *method = self.useStreaming ? @"streamGenerateContent?alt=sse" : @"generateContent";
     NSString *urlString = [NSString stringWithFormat:
@@ -73,18 +78,12 @@
 
     NSInteger requestedOutputTokens = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderGemini];
-    // If model metadata is unavailable, use a conservative fallback rather than sending an invalid huge value.
     if (modelCap <= 0) modelCap = 8192;
-    // A zero setting means the app does not impose a separate limit: defer to the model's reported cap.
     NSInteger outputCeiling = requestedOutputTokens > 0 ? MIN(requestedOutputTokens, modelCap) : modelCap;
     NSString *lowerModel = self.model.lowercaseString;
     AIReasoningLevel reasoning = [AppSettings reasoningLevel];
 
     NSMutableDictionary *generationConfig = [NSMutableDictionary dictionary];
-    // maxOutputTokens includes hidden reasoning tokens. Always expose the model's
-    // full published output ceiling to generation; reserve only a small answer floor
-    // when setting the explicit Gemini 2.5 thinking budget. The previous 2/3 split
-    // silently reduced normal answer length even when the user selected model maximum.
     BOOL supportsThinking = [lowerModel containsString:@"gemini-2.5"] ||
                             [lowerModel containsString:@"gemini-3"] ||
                             [lowerModel containsString:@"gemini-4"];
@@ -93,13 +92,10 @@
         : outputCeiling;
     NSInteger availableThinking = supportsThinking ? MAX(0, outputCeiling - answerReserve) : 0;
     NSInteger thinkingBudget = 0;
-    // Gemini 3 uses lowercase thinkingLevel values. Gemini 2.5 uses explicit budgets.
-    // Keep model-specific documented ranges: Pro up to 32,768; Flash variants up to 24,576.
     if ([lowerModel containsString:@"gemini-4"]) {
         NSArray *levels = @[@"low", @"low", @"medium", @"high", @"high"];
         generationConfig[@"thinkingConfig"] = @{ @"thinkingLevel": levels[(NSUInteger)reasoning] };
     } else if ([lowerModel containsString:@"gemini-3"]) {
-        // Gemini 3.1 Pro does not accept "minimal"; other listed Gemini 3 Flash models do.
         NSArray *levels = [lowerModel containsString:@"pro"]
             ? @[@"low", @"low", @"medium", @"high", @"high"]
             : @[@"minimal", @"low", @"medium", @"high", @"high"];
@@ -111,18 +107,14 @@
             : @[@0, @1024, @4096, @16384, @24576];
         NSInteger desiredBudget = [budgets[(NSUInteger)reasoning] integerValue];
         thinkingBudget = MIN(desiredBudget, availableThinking);
-        // Gemini 2.5 Pro requires at least 128 tokens when explicit thinking is enabled.
         if (proModel && thinkingBudget > 0 && thinkingBudget < 128) thinkingBudget = 0;
         if (!proModel || thinkingBudget >= 128) {
             generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
         }
     }
 
-    // The thinking level affects internal reasoning, not a separate app-side
-    // response cap. Keep maxOutputTokens at the selected model's real maximum.
     generationConfig[@"maxOutputTokens"] = @(MAX(1, outputCeiling));
 
-    // Gemini image-generation models require both text and image response modalities.
     if ([lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"]) {
         generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
     }
@@ -133,8 +125,6 @@
     if ([AppSettings webSearchEnabled] && !imageGenerationModel) payload[@"tools"] = @[@{ @"google_search": @{} }];
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    // High-effort reasoning and grounded searches can take longer before the first SSE event.
-    // Use a generous inactivity timeout; the delegate resets it as data continues to arrive.
     NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
@@ -144,11 +134,28 @@
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     [request setValue:self.useStreaming ? @"text/event-stream" : @"application/json" forHTTPHeaderField:@"Accept"];
     if (self.useStreaming) {
-        // No compression on the live stream, so events are not held back inside compressor blocks.
         [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
     }
     [request setValue:self.key forHTTPHeaderField:@"x-goog-api-key"];
 
+    self.savedRequest = request;
+    [self executeForcedRequest:request];
+}
+
+- (void)executeForcedRequest:(NSMutableURLRequest *)request {
+    if (self.finished || self.cancelled) return;
+    
+    [self.buffer setLength:0];
+    [self.errorBody setLength:0];
+    self.status = 0;
+    self.gotText = NO;
+    self.inStreamErrorStatus = 0;
+    self.inStreamErrorMessage = nil;
+    self.blockReason = nil;
+    self.inputTokenUsage = 0;
+    self.outputTokenUsage = 0;
+
+    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
     config.timeoutIntervalForResource = 3600;
@@ -178,7 +185,6 @@ didReceiveResponse:(NSURLResponse *)response
             id rawValue = headers[key];
             NSTimeInterval delay = [rawValue respondsToSelector:@selector(doubleValue)] ? [rawValue doubleValue] : 0;
             if (delay <= 0) {
-                // Retry-After may be delta-seconds or an HTTP-date (RFC 7231).
                 NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
                 formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
                 formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
@@ -204,17 +210,83 @@ didReceiveResponse:(NSURLResponse *)response
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (self.finished) return;
+
+    BOOL isRateLimitOrOverload = (self.status == 429 || self.status >= 500 ||
+                                  self.inStreamErrorStatus == 429 || self.inStreamErrorStatus >= 500);
+
+    if (!self.cancelled && error == nil && !isRateLimitOrOverload && self.status == 200 && (self.inStreamErrorStatus == 0)) {
+        self.finished = YES;
+        [self.session finishTasksAndInvalidate];
+        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
+        
+        if (!self.gotText) {
+            GeminiStreamError result = self.blockReason.length > 0 ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
+            NSString *detail = self.blockReason;
+            if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+                self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+            }
+            void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+            self.onDelta = nil;
+            self.onImage = nil;
+            self.onUsage = nil;
+            self.onFinish = nil;
+            if (finish) finish(result, self.status, detail);
+            return;
+        }
+        
+        if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
+            self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
+        }
+        void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+        self.onDelta = nil;
+        self.onImage = nil;
+        self.onUsage = nil;
+        self.onFinish = nil;
+        if (finish) finish(GeminiStreamErrorNone, self.status, nil);
+        return;
+    }
+
+    if (self.cancelled) {
+        self.finished = YES;
+        [self.session finishTasksAndInvalidate];
+        void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
+        self.onDelta = nil;
+        self.onImage = nil;
+        self.onUsage = nil;
+        self.onFinish = nil;
+        if (finish) finish(GeminiStreamErrorCancelled, self.status, nil);
+        return;
+    }
+
+    // === BẺ CƯỠNG CHẾ TỐI CAO: RETRY VÔ HẠN NGẦM TRÊN CÙNG 1 KEY & MODEL KHI DÍNH 429 / 5xx / ERROR ===
+    if (isRateLimitOrOverload || (error != nil && self.status == 0)) {
+        if (self.sameKeyRetryCount < 40) { // Thử lại tối đa 40 lần ngầm với backoff tăng dần
+            self.sameKeyRetryCount++;
+            NSTimeInterval backoffDelay = MIN(pow(2.0, self.sameKeyRetryCount), 30.0);
+            NSTimeInterval jitter = (double)(arc4random_uniform(1000)) / 500.0; // 0 -> 2s ngẫu nhiên
+            NSTimeInterval totalWait = backoffDelay + jitter;
+            
+            NSLog(@"[SupremeForce-GeminiSameKey] Dính lỗi 429/Server/Network trên cùng 1 Key. Lần retry thứ %ld. Đang chờ %.2fs rồi đấm lại server...", (long)self.sameKeyRetryCount, totalWait);
+            
+            [self.session finishTasksAndInvalidate];
+            
+            __weak typeof(self) weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(totalWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [weakSelf executeForcedRequest:weakSelf.savedRequest];
+            });
+            return;
+        }
+    }
+
+    // Xử lý lỗi thông thường khi đã vượt quá giới hạn retry
     self.finished = YES;
     [self.session finishTasksAndInvalidate];
 
     GeminiStreamError result = GeminiStreamErrorNone;
     NSString *detail = nil;
 
-    if (self.cancelled) {
-        result = GeminiStreamErrorCancelled;
-    } else if (error != nil) {
+    if (error != nil) {
         result = GeminiStreamErrorNetwork;
-        // Keep the real reason (timeout, connection lost, TLS...) so it can be shown instead of a vague message.
         detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
     } else if (self.status != 200) {
         NSString *message = [self messageFromErrorBody:self.errorBody];
@@ -237,8 +309,6 @@ didReceiveResponse:(NSURLResponse *)response
         self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
     }
     void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
-    // Streaming endpoints can return HTTP 200 and then send an error object in an SSE frame.
-    // Surface its embedded status (e.g. 503/429) to the controller's retry policy.
     NSInteger status = self.inStreamErrorStatus > 0 ? self.inStreamErrorStatus : self.status;
     self.onDelta = nil;
     self.onImage = nil;
@@ -278,7 +348,6 @@ didReceiveResponse:(NSURLResponse *)response
     [self processChunk:json];
 }
 
-// One decoded JSON object from the model (a stream event, or the whole single-shot reply).
 - (void)processChunk:(NSDictionary *)chunk {
     NSDictionary *usage = [chunk[@"usageMetadata"] isKindOfClass:[NSDictionary class]] ? chunk[@"usageMetadata"] : nil;
     if (usage) {
@@ -286,7 +355,6 @@ didReceiveResponse:(NSURLResponse *)response
         long long output = [usage[@"candidatesTokenCount"] longLongValue] + [usage[@"thoughtsTokenCount"] longLongValue];
         self.outputTokenUsage = MAX(self.outputTokenUsage, output);
     }
-    // An error can arrive inside the stream itself.
     NSDictionary *errorObject = [chunk[@"error"] isKindOfClass:[NSDictionary class]] ? chunk[@"error"] : nil;
     if (errorObject) {
         NSInteger code = [errorObject[@"code"] respondsToSelector:@selector(integerValue)] ? [errorObject[@"code"] integerValue] : 500;
@@ -318,7 +386,7 @@ didReceiveResponse:(NSURLResponse *)response
         if ([mime hasPrefix:@"image/"] && encoded.length > 0) {
             NSData *imageData = [[NSData alloc] initWithBase64EncodedString:encoded options:NSDataBase64DecodingIgnoreUnknownCharacters];
             if (imageData.length > 0) {
-                self.gotText = YES; // A generated image is a successful model response even when no text accompanies it.
+                self.gotText = YES;
                 if (self.onImage) self.onImage(imageData, mime);
             }
         }
@@ -348,7 +416,6 @@ didReceiveResponse:(NSURLResponse *)response
 - (NSString *)messageFromErrorBody:(NSData *)body {
     if (body.length == 0) return nil;
     id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
-    // Some responses wrap the error object in an array.
     if ([json isKindOfClass:[NSArray class]]) json = [(NSArray *)json firstObject];
     if (![json isKindOfClass:[NSDictionary class]]) return nil;
 
@@ -360,9 +427,6 @@ didReceiveResponse:(NSURLResponse *)response
     if (message.length) [diagnostics addObject:message];
     if (status.length) [diagnostics addObject:[NSString stringWithFormat:@"providerStatus=%@", status]];
 
-    // Preserve structured quota reasons/metrics. The controller uses these to
-    // distinguish a short rate window from a daily/monthly quota that cannot recover
-    // by immediately repeating the same request.
     NSArray *details = [err[@"details"] isKindOfClass:[NSArray class]] ? err[@"details"] : @[];
     for (id item in details) {
         if (![item isKindOfClass:[NSDictionary class]]) continue;
@@ -402,7 +466,6 @@ didReceiveResponse:(NSURLResponse *)response
     if (status == 413) return GeminiStreamErrorTooLarge;
     if (status == 400) {
         if (lower.length > 0 && [lower rangeOfString:@"api key"].location != NSNotFound) return GeminiStreamErrorInvalidKey;
-        // "Request payload size exceeds the limit" and similar wording
         if (lower.length > 0 && ([lower rangeOfString:@"payload size"].location != NSNotFound ||
                                  [lower rangeOfString:@"too large"].location != NSNotFound ||
                                  [lower rangeOfString:@"exceeds the limit"].location != NSNotFound)) {
