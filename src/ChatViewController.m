@@ -77,184 +77,6 @@ static NSString *ClippedForLog(NSString *text) {
     return oneLine.length > 200 ? [[oneLine substringToIndex:200] stringByAppendingString:@"…"] : oneLine;
 }
 
-#pragma mark - VoiceChatFullScreenViewController (Giao diện toàn màn hình ánh sáng xanh chuyển động)
-
-@interface VoiceChatFullScreenViewController : UIViewController
-@property (assign, nonatomic) NSInteger selectedVoiceIndex;
-@property (strong, nonatomic) ChatViewController *chatController;
-@end
-
-@implementation VoiceChatFullScreenViewController {
-    UIView *_blueLightView1;
-    UIView *_blueLightView2;
-    UILabel *_statusLabel;
-    UIButton *_micButton;
-    BOOL _isListening;
-}
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.05 green:0.08 blue:0.15 alpha:1.0];
-    
-    [self setupMovingBlueLights];
-    
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 50, 40, 40);
-    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    [closeBtn addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:closeBtn];
-    
-    CGFloat screenW = CGRectGetWidth(self.view.bounds);
-    CGFloat screenH = CGRectGetHeight(self.view.bounds);
-    
-    UIView *centerOrb = [[UIView alloc] initWithFrame:CGRectMake((screenW - 140)/2, (screenH - 140)/2 - 40, 140, 140)];
-    centerOrb.layer.cornerRadius = 70;
-    centerOrb.backgroundColor = [[UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.3] colorWithAlphaComponent:0.4];
-    centerOrb.layer.shadowColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:1.0].CGColor;
-    centerOrb.layer.shadowOpacity = 0.8;
-    centerOrb.layer.shadowRadius = 30;
-    centerOrb.layer.shadowOffset = CGSizeZero;
-    [self.view addSubview:centerOrb];
-    
-    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-    pulse.fromValue = @1.0;
-    pulse.toValue = @1.15;
-    pulse.autoreverses = YES;
-    pulse.repeatCount = HUGE_VALF;
-    pulse.duration = 2.0;
-    [centerOrb.layer addAnimation:pulse forKey:@"pulse"];
-    
-    _statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, CGRectGetMaxY(centerOrb.frame) + 30, screenW - 40, 40)];
-    _statusLabel.text = @"Đang sẵn sàng trò chuyện...";
-    _statusLabel.textColor = [UIColor whiteColor];
-    _statusLabel.textAlignment = NSTextAlignmentCenter;
-    _statusLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
-    [self.view addSubview:_statusLabel];
-    
-    _micButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _micButton.frame = CGRectMake((screenW - 80)/2, screenH - 120, 80, 80);
-    _micButton.layer.cornerRadius = 40;
-    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
-    
-    UIImage *micImg = nil;
-    if (@available(iOS 13.0, *)) {
-        micImg = [UIImage systemImageNamed:@"mic.fill"];
-    }
-    if (micImg) {
-        [_micButton setImage:micImg forState:UIControlStateNormal];
-        _micButton.tintColor = [UIColor whiteColor];
-    } else {
-        [_micButton setTitle:@"🎤" forState:UIControlStateNormal];
-    }
-    [_micButton addTarget:self action:@selector(micButtonTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_micButton];
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self startVoiceSession];
-    });
-}
-
-- (void)setupMovingBlueLights {
-    CGFloat screenW = CGRectGetWidth(self.view.bounds);
-    CGFloat screenH = CGRectGetHeight(self.view.bounds);
-    
-    _blueLightView1 = [[UIView alloc] initWithFrame:CGRectMake(-50, -50, 300, 300)];
-    _blueLightView1.layer.cornerRadius = 150;
-    _blueLightView1.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.8 alpha:0.35];
-    _blueLightView1.clipsToBounds = YES;
-    [self.view addSubview:_blueLightView1];
-    
-    _blueLightView2 = [[UIView alloc] initWithFrame:CGRectMake(screenW - 250, screenH - 250, 350, 350)];
-    _blueLightView2.layer.cornerRadius = 175;
-    _blueLightView2.backgroundColor = [UIColor colorWithRed:0.1 green:0.7 blue:0.9 alpha:0.3];
-    [self.view addSubview:_blueLightView2];
-    
-    [UIView animateKeyframesWithDuration:8.0 delay:0 options:UIViewKeyframeAnimationOptionAutoreverse | UIViewKeyframeAnimationOptionRepeat animations:^{
-        [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.5 animations:^{
-            self->_blueLightView1.frame = CGRectMake(screenW - 200, screenH / 3, 350, 350);
-            self->_blueLightView2.frame = CGRectMake(50, 100, 300, 300);
-        }];
-        [UIView addKeyframeWithRelativeStartTime:0.5 relativeDuration:0.5 animations:^{
-            self->_blueLightView1.frame = CGRectMake(50, screenH - 300, 320, 320);
-            self->_blueLightView2.frame = CGRectMake(screenW - 250, 80, 360, 360);
-        }];
-    } completion:nil];
-}
-
-- (void)closeTapped {
-    if (self.chatController.voiceManager) {
-        [self.chatController.voiceManager stopRecording];
-        [self.chatController.voiceManager stopSpeaking];
-    }
-    [self dismissViewControllerAnimated:YES completion:nil];
-}
-
-- (void)startVoiceSession {
-    if (!self.chatController.voiceManager) {
-        self.chatController.voiceManager = [VoiceChatManager shared];
-    }
-    
-    _statusLabel.text = @"Đang lắng nghe...";
-    _isListening = YES;
-    _micButton.backgroundColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.2 alpha:1.0];
-    
-    __weak typeof(self) weakSelf = self;
-    [self.chatController.voiceManager requestAuthorization:^(BOOL granted) {
-        if (!granted) {
-            _statusLabel.text = @"Cần quyền microphone.";
-            return;
-        }
-        [weakSelf.chatController.voiceManager startRecordingWithPartial:^(NSString *text) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (text.length > 0) {
-                    _statusLabel.text = text;
-                }
-            });
-        } final:^(NSString *text) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (text.length > 0) {
-                    _statusLabel.text = [NSString stringWithFormat:@"Đã gửi: %@", text];
-                    [weakSelf sendVoiceTextToAI:text];
-                } else {
-                    _statusLabel.text = @"Không nghe rõ, thử lại nhé.";
-                    [weakSelf resetMicButtonState];
-                }
-            });
-        } error:^(NSString *msg) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                _statusLabel.text = msg ?: @"Lỗi ghi âm.";
-                [weakSelf resetMicButtonState];
-            });
-        }];
-    }];
-}
-
-- (void)micButtonTapped {
-    if (_isListening) {
-        [self.chatController.voiceManager stopRecording];
-        _isListening = NO;
-        [self resetMicButtonState];
-    } else {
-        [self startVoiceSession];
-    }
-}
-
-- (void)resetMicButtonState {
-    _isListening = NO;
-    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
-}
-
-- (void)sendVoiceTextToAI:(NSString *)text {
-    _statusLabel.text = @"AI đang suy nghĩ...";
-    self.chatController.textView.text = text;
-    [self.chatController textViewDidChange:self.chatController.textView];
-    [self.chatController sendTapped];
-}
-
-@end
-
 #pragma mark - ChatViewController
 
 @interface ChatViewController () <WKNavigationDelegate, ScriptMessageTarget, UITextViewDelegate,
@@ -282,6 +104,7 @@ static NSString *ClippedForLog(NSString *text) {
 @property (strong, nonatomic) UITextView *textView;
 @property (strong, nonatomic) UILabel *placeholderLabel;
 @property (strong, nonatomic) UIButton *sendButton;
+@property (strong, nonatomic) VoiceChatManager *voiceManager;
 @property (assign, nonatomic) BOOL voiceRecording;
 @property (assign, nonatomic) BOOL lastWasStreaming;
 @property (strong, nonatomic) UIButton *modelButton;
@@ -1307,7 +1130,6 @@ static NSString *ClippedForLog(NSString *text) {
         [self.sendButton setTitle:nil forState:UIControlStateNormal];
         self.sendButton.backgroundColor = canSend ? [Theme accent] : [Theme accentDisabled];
     } else {
-        // Ô trống: thay emoji bằng icon mic chuẩn (SF Symbols hoặc fallback)
         UIImage *micImg = nil;
         if (@available(iOS 13.0, *)) {
             micImg = [UIImage systemImageNamed:@"mic.fill"];
@@ -1337,7 +1159,7 @@ static NSString *ClippedForLog(NSString *text) {
     [self.webView evaluateJavaScript:[NSString stringWithFormat:@"document.documentElement.style.setProperty('--uiscale','%.3f');", sc] completionHandler:nil];
 }
 
-#pragma mark - Voice chat & Voice Selection Popup (Bung hình chữ nhật từ phải qua trái)
+#pragma mark - Voice chat & Voice Selection Popup
 
 - (void)showVoiceSelectionPopup {
     if ([self.view viewWithTag:9988]) return;
@@ -1360,7 +1182,6 @@ static NSString *ClippedForLog(NSString *text) {
     CGFloat startX = screenW - 12 - 36 - menuW;
     CGFloat startY = bottomBarY - menuH - 8;
     
-    // Khởi tạo khung hình chữ nhật ban đầu tại vị trí nút mic (nhỏ gọn để hiệu ứng bung từ phải qua trái)
     UIView *menuCard = [[UIView alloc] initWithFrame:CGRectMake(screenW - 12 - 36, startY + menuH/2, 0, 0)];
     menuCard.tag = 9989;
     menuCard.backgroundColor = [Theme surface];
@@ -1398,7 +1219,6 @@ static NSString *ClippedForLog(NSString *text) {
     
     [self.view addSubview:overlay];
     
-    // Hiệu ứng bung ra hình chữ nhật từ phải qua trái mượt mà
     [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:UIViewAnimationOptionCurveEaseOut animations:^{
         menuCard.frame = CGRectMake(startX, startY, menuW, menuH);
     } completion:nil];
@@ -1908,7 +1728,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *text = [self trimmedInput];
     BOOL hasAttachments = self.pendingAttachments.count > 0;
     if (text.length == 0 && !hasAttachments) {
-        [self showVoiceSelectionPopup];   // Nút mic: hiển thị menu chọn giọng nói bung từ phải qua trái
+        [self showVoiceSelectionPopup];
         return;
     }
     if (!self.webReady || self.importsInFlight > 0) return;
@@ -2511,11 +2331,11 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     [self.pendingAttachments removeAllObjects];
 
     NSString *text = [target[@"text"] isKindOfClass:[NSString class]] ? target[@"text"] : @"";
-    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSArray class]] ? [target[@"attachments"] copy] : @[];
+    NSArray *attachments = [target[@"attachments"] isKindOfClass:[NSString class]] ? [target[@"attachments"] copy] : @[];
 
     for (NSInteger i = (NSInteger)messages.count - 1; i >= index; i--) {
         if (i != index) {
-            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSArray class]]
+            NSArray *laterAttachments = [messages[(NSUInteger)i][@"attachments"] isKindOfClass:[NSString class]]
                 ? messages[(NSUInteger)i][@"attachments"] : @[];
             for (NSDictionary *att in laterAttachments) [AttachmentStore deleteAttachment:att conversation:cid];
         }
@@ -2573,6 +2393,184 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         base = [base stringByAppendingFormat:@"\n\n%@", [NSString stringWithFormat:L(@"err_detail"), clipped]];
     }
     return base;
+}
+
+@end
+
+#pragma mark - VoiceChatFullScreenViewController (Giao diện toàn màn hình ánh sáng xanh chuyển động)
+
+@interface VoiceChatFullScreenViewController : UIViewController
+@property (assign, nonatomic) NSInteger selectedVoiceIndex;
+@property (strong, nonatomic) ChatViewController *chatController;
+@end
+
+@implementation VoiceChatFullScreenViewController {
+    UIView *_blueLightView1;
+    UIView *_blueLightView2;
+    UILabel *_statusLabel;
+    UIButton *_micButton;
+    BOOL _isListening;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithRed:0.05 green:0.08 blue:0.15 alpha:1.0];
+    
+    [self setupMovingBlueLights];
+    
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(20, 50, 40, 40);
+    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    [closeBtn addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:closeBtn];
+    
+    CGFloat screenW = CGRectGetWidth(self.view.bounds);
+    CGFloat screenH = CGRectGetHeight(self.view.bounds);
+    
+    UIView *centerOrb = [[UIView alloc] initWithFrame:CGRectMake((screenW - 140)/2, (screenH - 140)/2 - 40, 140, 140)];
+    centerOrb.layer.cornerRadius = 70;
+    centerOrb.backgroundColor = [[UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.3] colorWithAlphaComponent:0.4];
+    centerOrb.layer.shadowColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:1.0].CGColor;
+    centerOrb.layer.shadowOpacity = 0.8;
+    centerOrb.layer.shadowRadius = 30;
+    centerOrb.layer.shadowOffset = CGSizeZero;
+    [self.view addSubview:centerOrb];
+    
+    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    pulse.fromValue = @1.0;
+    pulse.toValue = @1.15;
+    pulse.autoreverses = YES;
+    pulse.repeatCount = HUGE_VALF;
+    pulse.duration = 2.0;
+    [centerOrb.layer addAnimation:pulse forKey:@"pulse"];
+    
+    _statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, CGRectGetMaxY(centerOrb.frame) + 30, screenW - 40, 40)];
+    _statusLabel.text = @"Đang sẵn sàng trò chuyện...";
+    _statusLabel.textColor = [UIColor whiteColor];
+    _statusLabel.textAlignment = NSTextAlignmentCenter;
+    _statusLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
+    [self.view addSubview:_statusLabel];
+    
+    _micButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _micButton.frame = CGRectMake((screenW - 80)/2, screenH - 120, 80, 80);
+    _micButton.layer.cornerRadius = 40;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
+    
+    UIImage *micImg = nil;
+    if (@available(iOS 13.0, *)) {
+        micImg = [UIImage systemImageNamed:@"mic.fill"];
+    }
+    if (micImg) {
+        [_micButton setImage:micImg forState:UIControlStateNormal];
+        _micButton.tintColor = [UIColor whiteColor];
+    } else {
+        [_micButton setTitle:@"🎤" forState:UIControlStateNormal];
+    }
+    [_micButton addTarget:self action:@selector(micButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_micButton];
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self startVoiceSession];
+    });
+}
+
+- (void)setupMovingBlueLights {
+    CGFloat screenW = CGRectGetWidth(self.view.bounds);
+    CGFloat screenH = CGRectGetHeight(self.view.bounds);
+    
+    _blueLightView1 = [[UIView alloc] initWithFrame:CGRectMake(-50, -50, 300, 300)];
+    _blueLightView1.layer.cornerRadius = 150;
+    _blueLightView1.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.8 alpha:0.35];
+    _blueLightView1.clipsToBounds = YES;
+    [self.view addSubview:_blueLightView1];
+    
+    _blueLightView2 = [[UIView alloc] initWithFrame:CGRectMake(screenW - 250, screenH - 250, 350, 350)];
+    _blueLightView2.layer.cornerRadius = 175;
+    _blueLightView2.backgroundColor = [UIColor colorWithRed:0.1 green:0.7 blue:0.9 alpha:0.3];
+    [self.view addSubview:_blueLightView2];
+    
+    [UIView animateKeyframesWithDuration:8.0 delay:0 options:UIViewKeyframeAnimationOptionAutoreverse | UIViewKeyframeAnimationOptionRepeat animations:^{
+        [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.5 animations:^{
+            self->_blueLightView1.frame = CGRectMake(screenW - 200, screenH / 3, 350, 350);
+            self->_blueLightView2.frame = CGRectMake(50, 100, 300, 300);
+        }];
+        [UIView addKeyframeWithRelativeStartTime:0.5 relativeDuration:0.5 animations:^{
+            self->_blueLightView1.frame = CGRectMake(50, screenH - 300, 320, 320);
+            self->_blueLightView2.frame = CGRectMake(screenW - 250, 80, 360, 360);
+        }];
+    } completion:nil];
+}
+
+- (void)closeTapped {
+    if (self.chatController.voiceManager) {
+        [self.chatController.voiceManager stopRecording];
+        [self.chatController.voiceManager stopSpeaking];
+    }
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)startVoiceSession {
+    if (!self.chatController.voiceManager) {
+        self.chatController.voiceManager = [VoiceChatManager shared];
+    }
+    
+    _statusLabel.text = @"Đang lắng nghe...";
+    _isListening = YES;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.2 alpha:1.0];
+    
+    __weak typeof(self) weakSelf = self;
+    [self.chatController.voiceManager requestAuthorization:^(BOOL granted) {
+        if (!granted) {
+            _statusLabel.text = @"Cần quyền microphone.";
+            return;
+        }
+        [weakSelf.chatController.voiceManager startRecordingWithPartial:^(NSString *text) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (text.length > 0) {
+                    _statusLabel.text = text;
+                }
+            });
+        } final:^(NSString *text) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (text.length > 0) {
+                    _statusLabel.text = [NSString stringWithFormat:@"Đã gửi: %@", text];
+                    [weakSelf sendVoiceTextToAI:text];
+                } else {
+                    _statusLabel.text = @"Không nghe rõ, thử lại nhé.";
+                    [weakSelf resetMicButtonState];
+                }
+            });
+        } error:^(NSString *msg) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                _statusLabel.text = msg ?: @"Lỗi ghi âm.";
+                [weakSelf resetMicButtonState];
+            });
+        }];
+    }];
+}
+
+- (void)micButtonTapped {
+    if (_isListening) {
+        [self.chatController.voiceManager stopRecording];
+        _isListening = NO;
+        [self resetMicButtonState];
+    } else {
+        [self startVoiceSession];
+    }
+}
+
+- (void)resetMicButtonState {
+    _isListening = NO;
+    _micButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0];
+}
+
+- (void)sendVoiceTextToAI:(NSString *)text {
+    _statusLabel.text = @"AI đang suy nghĩ...";
+    self.chatController.textView.text = text;
+    [self.chatController textViewDidChange:self.chatController.textView];
+    [self.chatController sendTapped];
 }
 
 @end
