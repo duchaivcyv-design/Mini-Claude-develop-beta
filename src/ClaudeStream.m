@@ -451,14 +451,15 @@ didReceiveResponse:(NSURLResponse *)response
     if ([type isEqualToString:@"overloaded_error"] || [type isEqualToString:@"api_error"]) return GeminiStreamErrorServer;
 
     if (status == 413) return GeminiStreamErrorTooLarge;
-    if (status == 400) {
+        if (status == 400) {
         if (lower.length > 0 && ([lower rangeOfString:@"too long"].location != NSNotFound ||
                                  [lower rangeOfString:@"too large"].location != NSNotFound ||
-                                 [lower rangeOfString::"exceeds"].location != NSNotFound)) {
+                                 [lower rangeOfString:@"exceeds"].location != NSNotFound)) {
             return GeminiStreamErrorTooLarge;
         }
         return GeminiStreamErrorUnknown;
     }
+
     if (status == 401) return GeminiStreamErrorInvalidKey;
     if (status == 403) return GeminiStreamErrorPermissionDenied;
     if (status == 404) return GeminiStreamErrorModelNotFound;
