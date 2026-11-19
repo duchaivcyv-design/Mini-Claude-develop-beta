@@ -1,4 +1,4 @@
-name: Build GestaltX IPA
+name: Build GestaltX IPA & DEB
 
 on:
   push:
@@ -21,7 +21,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-ipa-${{ github.event.pull_request.number || github.ref }}
+  group: build-ipa-deb-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Install IPA packaging tools
+      - name: Install IPA & DEB packaging tools
         run: |
           brew install ldid dpkg
 
@@ -64,11 +64,65 @@ jobs:
           ipa_files=(dist/*.ipa)
           if (( ${#ipa_files[@]} == 0 )); then
             echo "::error::build.sh completed but did not create an IPA in dist/."
-            echo "Expected tools/make_ipa.sh to create dist/*.ipa."
             ls -la dist 2>/dev/null || true
             exit 1
           fi
           printf 'ipa=%s\n' "${ipa_files[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Package DEB from built .app
+        id: deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          app_src=""
+          for candidate in build/Payload/*.app build/*.app Payload/*.app *.app; do
+            if [[ -d "$candidate" ]]; then
+              app_src="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$app_src" ]]; then
+            ipa_path="${{ steps.build.outputs.ipa }}"
+            if [[ -n "$ipa_path" && -f "$ipa_path" ]]; then
+              tmp_extract="$(mktemp -d)"
+              unzip -q "$ipa_path" -d "$tmp_extract"
+              app_src="$(find "$tmp_extract/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)"
+            fi
+          fi
+          if [[ -z "$app_src" || ! -d "$app_src" ]]; then
+            echo "::error::Could not locate built .app bundle for DEB packaging."
+            exit 1
+          fi
+          app_name="$(basename "$app_src" .app)"
+          info_plist="$app_src/Info.plist"
+          bundle_id="com.gestaltx.app"
+          app_version="1.0.0"
+          if [[ -f "$info_plist" ]]; then
+            parsed_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$info_plist" 2>/dev/null || true)"
+            parsed_ver="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$info_plist" 2>/dev/null || true)"
+            if [[ -z "$parsed_ver" ]]; then
+              parsed_ver="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$info_plist" 2>/dev/null || true)"
+            fi
+            [[ -n "$parsed_id" ]] && bundle_id="$parsed_id"
+            [[ -n "$parsed_ver" ]] && app_version="$parsed_ver"
+          fi
+          clean_ver="${app_version#v}"
+          [[ -z "$clean_ver" ]] && clean_ver="1.0.0"
+          pkg_root="$(mktemp -d)"
+          mkdir -p "$pkg_root/DEBIAN" "$pkg_root/Applications"
+          cp -R "$app_src" "$pkg_root/Applications/${app_name}.app"
+          main_bin="$pkg_root/Applications/${app_name}.app/${app_name}"
+          if [[ -f "$main_bin" ]] && command -v ldid >/dev/null 2>&1; then
+            ldid -S "$main_bin" || true
+          fi
+          printf "Package: %s\nName: %s\nVersion: %s\nArchitecture: iphoneos-arm64\nMaintainer: GestaltX\nSection: Utilities\nDescription: %s packaged for jailbroken iOS (rootless).\n" "$bundle_id" "$app_name" "$clean_ver" "$app_name" > "$pkg_root/DEBIAN/control"
+          printf "#!/bin/sh\nset -e\nif command -v uicache >/dev/null 2>&1; then\n  uicache -a || true\nfi\nexit 0\n" > "$pkg_root/DEBIAN/postinst"
+          chmod 0755 "$pkg_root/DEBIAN/postinst"
+          deb_out="dist/${app_name}_${clean_ver}_iphoneos-arm64.deb"
+          dpkg-deb -b "$pkg_root" "$deb_out"
+          echo "Created DEB: $deb_out"
+          printf 'deb=%s\n' "$deb_out" >> "$GITHUB_OUTPUT"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -78,18 +132,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish IPA to GitHub release
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GestaltX-deb
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish IPA & DEB to GitHub release
         if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ipa="$(find dist -maxdepth 1 -type f -name '*.ipa' -print -quit)"
-          if [[ -z "$ipa" ]]; then
-            echo "::error::No IPA found in dist/."
+          shopt -s nullglob
+          assets=(dist/*.ipa dist/*.deb)
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::No IPA or DEB found in dist/."
             exit 1
           fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "GestaltX ${TAG}" --generate-notes
           fi
-          gh release upload "$TAG" "$ipa" --clobber
+          gh release upload "$TAG" "${assets[@]}" --clobber
