@@ -12,12 +12,12 @@ static const CGFloat    kImageMaxSide      = 1440;                 // Gemini sca
 static const CGFloat    kThumbMaxSide      = 160;
 static const NSUInteger kMaxPDFBytes       = 10 * 1024 * 1024;
 static const NSUInteger kMaxOfficeBytes    = 15 * 1024 * 1024;     // .docx / .pptx archive size
-static const NSUInteger kMaxTextFileBytes  = 256 * 1024 * 1024;    // Hỗ trợ file log/code/txt lớn (~1 triệu dòng+)
 static const NSUInteger kMaxImageFileBytes = 40 * 1024 * 1024;
 static const unsigned long long kMaxVideoFileBytes = 100ULL * 1024ULL * 1024ULL;
 static const NSTimeInterval kMaxVideoDuration = 120.0;
 static const NSUInteger kMaxVideoFrames = 6;
-static const NSUInteger kMaxTextChars      = 50 * 1024 * 1024;     // Cho phép lưu tới 50 triệu ký tự, không cắt ngang file 1 triệu dòng
+const NSUInteger kMaxTextFileBytes  = 256 * 1024 * 1024;    // Hỗ trợ file log/code/txt lớn (~1 triệu dòng+)
+const NSUInteger kMaxTextChars      = 50 * 1024 * 1024;     // Cho phép lưu tới 50 triệu ký tự, không cắt ngang file 1 triệu dòng
 static const unsigned long long kMaxZipFileBytes = 200ULL * 1024ULL * 1024ULL;
 static const NSUInteger kStreamWriteChunkBytes = 1024 * 1024;      // Ghi file theo từng khối 1MB để tránh spike RAM
 
