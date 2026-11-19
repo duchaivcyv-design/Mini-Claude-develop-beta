@@ -3,6 +3,8 @@
 // Limits (kept below Google's request-size cap, with room for base64 growth and the chat text).
 extern const NSInteger  kMaxAttachmentsPerMessage;   // files per message
 extern const NSUInteger kMaxInlineBytesPerMessage;   // raw bytes of images + PDFs sent in one request
+extern const NSUInteger kMaxTextFileBytes;         // max raw bytes for text/code/log files (~1M+ lines)
+extern const NSUInteger kMaxTextChars;             // max characters stored for text attachments
 
 // Attachments are stored on this device only, in one folder per conversation.
 // An attachment is an NSDictionary:

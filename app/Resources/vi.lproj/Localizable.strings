@@ -210,3 +210,21 @@
 "new_chat_title" = "Tạo cuộc trò chuyện mới?";
 "new_chat_msg" = "Cuộc trò chuyện hiện tại vẫn được lưu trong Lịch sử.";
 "new_chat_confirm" = "Tạo mới";
+
+/* Font, size, credits (0.7.2+) */
+"text_size_header" = "Cỡ chữ";
+"text_size_title" = "Cỡ chữ";
+"text_size_footer" = "Áp dụng cho khung chat và ô nhập. Tự khớp với màn hình điện thoại.";
+"size_small" = "Nhỏ";
+"size_med_small" = "Hơi nhỏ";
+"size_default" = "Mặc định";
+"size_large" = "Lớn";
+"size_xlarge" = "Rất lớn";
+"font_header" = "Font chữ";
+"font_claude" = "Font Claude";
+"font_claude_note" = "Chữ có chân cho tiêu đề và câu trả lời, giống phong cách Claude";
+"font_system" = "Font hệ thống";
+"font_system_note" = "San Francisco, chữ không chân của iOS";
+"main_developer" = "Main developer";
+"search_chip_title" = "Tìm kiếm";
+"fast_boost_title" = "Tăng tốc ×10";

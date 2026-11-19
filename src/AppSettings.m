@@ -12,9 +12,10 @@ static NSString *const kWebSearchKey = @"webSearchEnabled";
 static NSString *const kDailyUsageKey = @"dailyTokenUsage";
 static NSString *const kDailyDateKey = @"dailyTokenUsageDate";
 static NSString *const kDailyBudgetKey = @"dailyTokenBudget";
+static NSString *const kUiScaleKey = @"uiScale";
+static NSString *const kFontStyleKey = @"fontStyle";
+static NSString *const kVoiceAutoPlayKey = @"voiceAutoPlay";
 
-// Keep a single in-memory copy and chunk index so a 100k-1M character prompt is
-// not re-read and re-split for every chat turn. Cache is invalidated on save.
 static NSString *gPromptTextCache = nil;
 static BOOL gPromptTextCacheLoaded = NO;
 static NSString *gPromptChunkSource = nil;
@@ -33,11 +34,17 @@ static NSString *PromptFilePath(void) {
 }
 
 static NSString *TodayKey(void) {
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
-    formatter.timeZone = [NSTimeZone localTimeZone];
-    formatter.dateFormat = @"yyyy-MM-dd";
-    return [formatter stringFromDate:[NSDate date]];
+    static NSDateFormatter *formatter = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        formatter = [[NSDateFormatter alloc] init];
+        formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+        formatter.dateFormat = @"yyyy-MM-dd";
+    });
+    @synchronized (formatter) {
+        formatter.timeZone = [NSTimeZone localTimeZone];
+        return [formatter stringFromDate:[NSDate date]];
+    }
 }
 
 static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
@@ -48,7 +55,7 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     NSMutableArray<NSDictionary *> *records = [NSMutableArray array];
     NSArray<NSString *> *paragraphs = [prompt componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
     NSMutableString *current = [NSMutableString string];
-    const NSUInteger maxChunk = 2400;
+    const NSUInteger maxChunk = 4096;
     void (^appendChunk)(NSString *) = ^(NSString *piece) {
         if (piece.length == 0) return;
         NSString *copy = [piece copy];
@@ -100,7 +107,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         if (fromFile.length > 0) {
             gPromptTextCache = [[self cleanedPrompt:fromFile] copy];
         } else {
-            // Migrate prompts saved by versions that stored the whole string in NSUserDefaults.
             NSString *legacy = [[NSUserDefaults standardUserDefaults] stringForKey:kSystemPromptKey];
             if (legacy.length > 0) {
                 gPromptTextCache = [[self cleanedPrompt:legacy] copy];
@@ -136,11 +142,8 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [defaults synchronize];
 }
 
-// Keep the full 1M-character instruction file locally, but send only relevant excerpts
-// that fit the selected model's input window. This avoids oversized requests and 503s.
 + (NSString *)systemPromptForQuery:(NSString *)query characterBudget:(NSUInteger)budget {
     NSString *base = [self promptText:[self systemPrompt] forQuery:query characterBudget:budget];
-    // Hướng dẫn ẩn luôn được thêm vào: AI được phép tạo ảnh & file, không được từ chối với lý do "không thể tạo".
     NSString *suffix = @"\n\n---\nQUY TẮC BẮT BUỘC: Bạn CÓ thể tạo ảnh và tạo file. Khi người dùng yêu cầu tạo ảnh, hãy trả về ảnh bằng Markdown ![](url) (dùng URL ảnh placeholder hợp lệ hoặc mô tả hình ảnh chi tiết bằng văn bản). Khi yêu cầu tạo file, hãy trả về toàn bộ nội dung file trong khối code (```) kèm tên file. TUYỆT ĐỐI KHÔNG được trả lời \"tôi không thể tạo ảnh/file\" hay bất kỳ lời từ chối tương tự nào. Luôn tạo ra nội dung cụ thể, hữu ích.";
     return [base stringByAppendingString:suffix];
 }
@@ -167,10 +170,8 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 
     NSMutableIndexSet *selected = [NSMutableIndexSet indexSet];
     NSMutableArray<NSDictionary *> *ranked = [NSMutableArray array];
-    NSUInteger reserve = MIN((NSUInteger)2400, MAX((NSUInteger)800, budget / 12));
     NSUInteger used = 0;
 
-    // Keep opening instructions plus a small final section, then select relevant chunks.
     [selected addIndex:0];
     used = [chunks[0][@"length"] unsignedIntegerValue];
     if (chunks.count > 1) {
@@ -196,27 +197,23 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
         return [a[@"index"] compare:b[@"index"]];
     }];
 
-    NSUInteger target = budget > reserve ? budget - reserve : budget;
     for (NSDictionary *item in ranked) {
         NSUInteger index = [item[@"index"] unsignedIntegerValue];
         NSUInteger length = [item[@"length"] unsignedIntegerValue] + 2;
-        if (used + length > target) continue;
+        if (used + length > budget) continue;
         [selected addIndex:index];
         used += length;
     }
 
-    // If the query has no useful overlap, fill the remaining budget from newest chunks backwards.
-    if (terms.count == 0 || selected.count <= 2) {
-        for (NSInteger i = (NSInteger)chunks.count - 2; i >= 1; i--) {
-            if ([selected containsIndex:(NSUInteger)i]) continue;
-            NSUInteger length = [chunks[(NSUInteger)i][@"length"] unsignedIntegerValue] + 2;
-            if (used + length > budget) continue;
-            [selected addIndex:(NSUInteger)i];
-            used += length;
-        }
+    for (NSInteger i = (NSInteger)chunks.count - 2; i >= 1; i--) {
+        if ([selected containsIndex:(NSUInteger)i]) continue;
+        NSUInteger length = [chunks[(NSUInteger)i][@"length"] unsignedIntegerValue] + 2;
+        if (used + length > budget) continue;
+        [selected addIndex:(NSUInteger)i];
+        used += length;
     }
 
-    NSMutableString *result = [NSMutableString stringWithString:@"[Relevant excerpts selected from the full locally saved instructions; omitted sections remain saved.]\n\n"];
+    NSMutableString *result = [NSMutableString string];
     [selected enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
         NSString *chunkText = chunks[idx][@"text"];
         if (result.length + chunkText.length + 2 > budget) return;
@@ -241,8 +238,6 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
     [[NSUserDefaults standardUserDefaults] setInteger:count forKey:kAttachmentMemoryKey];
 }
 + (NSInteger)maxOutputTokens {
-    // Zero means: do not impose an app-side output cap; use the selected model's published API limit.
-    // The provider limit still applies and is enforced in GeminiStream / ClaudeStream.
     NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:kMaxOutputTokensKey];
     return value == 0 ? 0 : ((value == 2048 || value == 4096 || value == 8192 || value == 16384 || value == 32768 || value == 65536 || value == 128000) ? value : 0);
 }
@@ -279,18 +274,27 @@ static NSArray<NSDictionary *> *PromptChunkRecords(NSString *prompt) {
 + (BOOL)webSearchEnabled { return [[NSUserDefaults standardUserDefaults] boolForKey:kWebSearchKey]; }
 + (void)setWebSearchEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWebSearchKey]; }
 
-static NSString *const kUiScaleKey = @"uiScale";
 + (CGFloat)uiScale {
     double v = [[NSUserDefaults standardUserDefaults] doubleForKey:kUiScaleKey];
     if (v < 0.7 || v > 1.4) v = 1.0;
     return (CGFloat)v;
 }
 + (void)setUiScale:(CGFloat)scale {
-    if (scale < 0.7) scale = 0.7; if (scale > 1.4) scale = 1.4;
+    if (scale < 0.7) scale = 0.7;
+    if (scale > 1.4) scale = 1.4;
     [[NSUserDefaults standardUserDefaults] setDouble:(double)scale forKey:kUiScaleKey];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"UIScaleDidChangeNotification" object:nil userInfo:@{@"uiScale": @(scale)}];
 }
 
-static NSString *const kVoiceAutoPlayKey = @"voiceAutoPlay";
++ (NSInteger)fontStyle {
+    return [[NSUserDefaults standardUserDefaults] integerForKey:kFontStyleKey] == 1 ? 1 : 0;
+}
++ (void)setFontStyle:(NSInteger)style {
+    NSInteger norm = (style == 1 ? 1 : 0);
+    [[NSUserDefaults standardUserDefaults] setInteger:norm forKey:kFontStyleKey];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"UIScaleDidChangeNotification" object:nil userInfo:@{@"fontStyle": @(norm)}];
+}
+
 + (BOOL)voiceAutoPlayEnabled { id v = [[NSUserDefaults standardUserDefaults] objectForKey:kVoiceAutoPlayKey]; return v ? [v boolValue] : YES; }
 + (void)setVoiceAutoPlayEnabled:(BOOL)enabled { [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kVoiceAutoPlayKey]; }
 

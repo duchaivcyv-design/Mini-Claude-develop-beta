@@ -37,6 +37,12 @@ typedef NS_ENUM(NSInteger, ThemeSkin) {
 + (UIImage *)iconPlus;
 + (UIImage *)iconCompose;   // square with a pencil: "new chat"
 + (UIImage *)iconSend;
++ (UIImage *)iconMic;       // microphone (drawn, no emoji)
++ (UIImage *)iconMicOfSize:(CGFloat)side;
++ (UIImage *)iconSearch;    // magnifying glass
++ (UIImage *)iconBolt;
++ (UIImage *)iconTool:(NSString *)name;   // "photo" "file" "library" "camera" "web" "think" "sparkle" "more" (template images)      // lightning bolt
++ (UIImage *)iconClose;     // cross
 + (UIImage *)iconStop;
 + (UIImage *)iconGear;      // cog wheel: Settings
 + (UIImage *)iconRefresh;   // circular arrow: reload the model list

@@ -3,7 +3,7 @@
 #import "Theme.h"
 #import "AppSettings.h"
 
-@interface SystemPromptViewController ()
+@interface SystemPromptViewController () <UITextViewDelegate>
 @property (strong, nonatomic) UILabel *hintLabel;
 @property (strong, nonatomic) UITextView *textView;
 @property (strong, nonatomic) UILabel *placeholderLabel;
@@ -38,7 +38,8 @@
     self.textView.keyboardAppearance = [Theme keyboardAppearance];
     self.textView.textContainerInset = UIEdgeInsetsMake(12, 10, 12, 10);
     self.textView.delegate = self;
-    self.textView.text = self.perConversation ? (self.initialText ?: @"") : [AppSettings systemPrompt];
+    NSString *rawInitial = self.perConversation ? (self.initialText ?: @"") : [AppSettings systemPrompt];
+    self.textView.text = [AppSettings cleanedPrompt:rawInitial];
     [self.view addSubview:self.textView];
 
     self.placeholderLabel = [[UILabel alloc] init];
@@ -66,7 +67,6 @@
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    // saved automatically, also when going back with the arrow
     if (self.perConversation) {
         if (self.onSave) self.onSave([AppSettings cleanedPrompt:self.textView.text]);
     } else {
@@ -93,18 +93,47 @@
 
 - (void)updateCounter {
     NSUInteger count = self.textView.text.length;
-    self.counterLabel.text = [NSString stringWithFormat:@"%lu / %lu", (unsigned long)count, (unsigned long)kMaxSystemPromptChars];
-    self.counterLabel.textColor = count > kMaxSystemPromptChars ? [Theme error] : [Theme secondaryText];
+    if (kMaxSystemPromptChars == 1000000) {
+        self.counterLabel.text = [NSString stringWithFormat:@"%lu / 1 triệu", (unsigned long)count];
+    } else {
+        self.counterLabel.text = [NSString stringWithFormat:@"%lu / %lu", (unsigned long)count, (unsigned long)kMaxSystemPromptChars];
+    }
+    self.counterLabel.textColor = count >= kMaxSystemPromptChars ? [Theme error] : [Theme secondaryText];
 }
 
 - (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
-    NSUInteger current = textView.text.length;
-    NSUInteger removed = MIN(range.length, current);
-    NSUInteger nextLength = current - removed + text.length;
-    return nextLength <= kMaxSystemPromptChars;
+    NSString *currentText = textView.text ?: @"";
+    NSUInteger current = currentText.length;
+    NSUInteger safeLoc = MIN(range.location, current);
+    NSUInteger safeLen = MIN(range.length, current - safeLoc);
+    NSRange safeRange = NSMakeRange(safeLoc, safeLen);
+
+    NSUInteger remainingAfterDelete = current - safeLen;
+    if (remainingAfterDelete >= kMaxSystemPromptChars && text.length > 0) {
+        [self updateCounter];
+        return NO;
+    }
+
+    if (remainingAfterDelete + text.length > kMaxSystemPromptChars) {
+        NSUInteger allowedLen = kMaxSystemPromptChars - remainingAfterDelete;
+        NSRange seqRange = [text rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, MIN(allowedLen, text.length))];
+        NSString *fitted = [text substringWithRange:seqRange];
+        NSString *updated = [currentText stringByReplacingCharactersInRange:safeRange withString:fitted];
+        textView.text = updated;
+        NSUInteger caret = safeLoc + fitted.length;
+        textView.selectedRange = NSMakeRange(caret, 0);
+        [self textViewDidChange:textView];
+        return NO;
+    }
+
+    return YES;
 }
 
 - (void)textViewDidChange:(UITextView *)textView {
+    if (textView.text.length > kMaxSystemPromptChars) {
+        NSString *cleaned = [AppSettings cleanedPrompt:textView.text];
+        textView.text = cleaned;
+    }
     self.placeholderLabel.hidden = textView.text.length > 0;
     [self updateCounter];
 }

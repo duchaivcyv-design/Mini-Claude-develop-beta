@@ -21,7 +21,24 @@
   var current = null;     // the reply that is being streamed right now
   var stick = true;       // follow the bottom while streaming, unless the user scrolled up
   var toastTimer = null;
-  var RENDER_INTERVAL = 90;   // ms: how often a streaming reply is re-rendered (the iPhone 6 is slow)
+  var RENDER_INTERVAL = 70;   // ms: smooth streaming cadence
+  var COLLAPSE_HEIGHT = 240;  // px: messages taller than this get a compact box + bottom-right arrow
+
+  function ensureScrollable() {
+    try {
+      document.documentElement.style.overflowY = 'auto';
+      document.documentElement.style.touchAction = 'pan-y';
+      document.body.style.overflowY = 'auto';
+      document.body.style.touchAction = 'pan-y';
+      document.body.style.webkitOverflowScrolling = 'touch';
+      if (msgsEl) {
+        msgsEl.style.overflowY = 'visible';
+        msgsEl.style.touchAction = 'pan-y';
+      }
+    } catch (e) {}
+  }
+
+  ensureScrollable();
 
   function post(obj) {
     try { window.webkit.messageHandlers.native.postMessage(obj); } catch (e) { /* not inside the app */ }
@@ -32,6 +49,7 @@
   }
 
   function toBottom(force) {
+    ensureScrollable();
     if (force || stick) {
       window.scrollTo(0, document.documentElement.scrollHeight);
     }
@@ -44,6 +62,7 @@
   };
 
   window.addEventListener('scroll', function () { stick = nearBottom(); updateJump(); }, false);
+  window.addEventListener('touchmove', function () { ensureScrollable(); }, { passive: true });
 
   // "Scroll to latest" button: shown when the reader is away from the bottom (e.g. a reply grows below the screen).
   var jumpEl = document.createElement('div');
@@ -62,12 +81,12 @@
   function glideToBottom() {
     if (jumpAnim) { cancelAnimationFrame(jumpAnim); }
     var from = window.pageYOffset, start = null;
-    var dur = 280;
+    var dur = 240;
     function step(t) {
       if (start === null) { start = t; }
       var k = Math.min(1, (t - start) / dur);
       var e = 1 - Math.pow(1 - k, 3);
-      var to = document.documentElement.scrollHeight - window.innerHeight;   // re-read: the reply may still be growing
+      var to = document.documentElement.scrollHeight - window.innerHeight;
       window.scrollTo(0, from + (to - from) * e);
       if (k < 1) { jumpAnim = requestAnimationFrame(step); } else { jumpAnim = null; stick = true; updateJump(); }
     }
@@ -91,6 +110,80 @@
     toastTimer = setTimeout(function () { toastEl.className = ''; }, 1400);
   }
 
+  function arrowSVG(expanded) {
+    if (expanded) {
+      return '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function applyCollapseIfNeeded(row, targetEl) {
+    if (!row || !targetEl || row._streaming) return;
+    var existingBtn = row.querySelector('.msg-expand-btn');
+    if (existingBtn && existingBtn.parentNode) {
+      existingBtn.parentNode.removeChild(existingBtn);
+    }
+    targetEl.classList.remove('msg-collapsible');
+    targetEl.classList.remove('msg-collapsed');
+    targetEl.classList.remove('msg-expanded');
+    targetEl.style.maxHeight = '';
+
+    var fullHeight = targetEl.scrollHeight || targetEl.offsetHeight || 0;
+    if (fullHeight <= COLLAPSE_HEIGHT + 40) return;
+
+    var collapsed = (row._userExpanded === true) ? false : true;
+    targetEl.classList.add('msg-collapsible');
+    if (collapsed) {
+      targetEl.classList.add('msg-collapsed');
+      targetEl.style.maxHeight = COLLAPSE_HEIGHT + 'px';
+    } else {
+      targetEl.classList.add('msg-expanded');
+      targetEl.style.maxHeight = 'none';
+    }
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'msg-expand-btn' + (collapsed ? '' : ' is-expanded');
+    btn.setAttribute('aria-label', collapsed ? 'Mở rộng' : 'Thu gọn');
+    btn.innerHTML = arrowSVG(!collapsed);
+
+    btn.addEventListener('click', function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      var nowCollapsed = targetEl.classList.contains('msg-collapsed');
+      if (nowCollapsed) {
+        targetEl.classList.remove('msg-collapsed');
+        targetEl.classList.add('msg-expanded');
+        targetEl.style.maxHeight = 'none';
+        btn.classList.add('is-expanded');
+        btn.setAttribute('aria-label', 'Thu gọn');
+        btn.innerHTML = arrowSVG(true);
+        row._userExpanded = true;
+      } else {
+        targetEl.classList.remove('msg-expanded');
+        targetEl.classList.add('msg-collapsed');
+        targetEl.style.maxHeight = COLLAPSE_HEIGHT + 'px';
+        btn.classList.remove('is-expanded');
+        btn.setAttribute('aria-label', 'Mở rộng');
+        btn.innerHTML = arrowSVG(false);
+        row._userExpanded = false;
+      }
+      updateJump();
+    }, false);
+
+    row.appendChild(btn);
+  }
+
+  function refreshAllCollapsibles() {
+    if (!msgsEl) return;
+    var rows = msgsEl.querySelectorAll('.row.user, .row.assistant');
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r._streaming) continue;
+      var target = r.querySelector('.body.md') || r.querySelector('.bubble');
+      if (target) applyCollapseIfNeeded(r, target);
+    }
+  }
+
   function showEmpty() {
     msgsEl.innerHTML = '';
     var box = el('div', 'empty');
@@ -101,6 +194,7 @@
     msgsEl.appendChild(box);
     jumpEl.className = '';
     document.documentElement.className = 'is-empty';
+    ensureScrollable();
     window.scrollTo(0, 0);
     post({ type: 'empty', value: true });
   }
@@ -110,6 +204,7 @@
     if (!e) { return; }
     if (e.parentNode) { e.parentNode.removeChild(e); }
     document.documentElement.className = '';
+    ensureScrollable();
     post({ type: 'empty', value: false });
   }
 
@@ -211,6 +306,7 @@
     row._text = text || '';
     msgsEl.appendChild(row);
     buildUserActions(row, messageIndex);
+    applyCollapseIfNeeded(row, bubble);
   }
 
   function renderInto(node, text) {
@@ -244,7 +340,10 @@
     }
     row._text = text || '';
     msgsEl.appendChild(row);
-    if (text) { buildActions(row); }
+    if (text) {
+      buildActions(row);
+      applyCollapseIfNeeded(row, body);
+    }
     if (imageId) {
       var actions = row.querySelector('.actions');
       if (!actions) { actions = el('div', 'actions'); row.appendChild(actions); }
@@ -268,17 +367,27 @@
 
     load: function (list) {
       current = null;
+      ensureScrollable();
       msgsEl.innerHTML = '';
       if (!list || !list.length) {
         showEmpty();
         return;
       }
       for (var i = 0; i < list.length; i++) {
-        if (list[i].role === 'user') { addUser(list[i].text, list[i].attachments, list[i].index !== undefined ? list[i].index : i); } else { addAssistant(list[i].text, list[i].attachments); }
+        if (list[i].role === 'user') {
+          addUser(list[i].text, list[i].attachments, list[i].index !== undefined ? list[i].index : i);
+        } else {
+          addAssistant(list[i].text, list[i].attachments);
+        }
       }
       refreshRegenerate();
-      stick = true;
-      toBottom(true);
+      setTimeout(function () {
+        refreshAllCollapsibles();
+        ensureScrollable();
+        stick = true;
+        toBottom(true);
+        updateJump();
+      }, 20);
     },
 
     addUser: function (text, atts, messageIndex) {
@@ -303,9 +412,9 @@
       row.appendChild(status);
       row.appendChild(body);
       msgsEl.appendChild(row);
-      current = { row: row, content: content, dot: dot, status: status, text: '', timer: null, rendered: false };
+      current = { row: row, body: body, content: content, dot: dot, status: status, text: '', timer: null, rendered: false };
       refreshRegenerate();
-      updateJump();   // the reply stays where it is: no automatic scrolling
+      updateJump();
     },
 
     delta: function (s) {
@@ -313,14 +422,19 @@
       current.text += s;
       var c = current;
       if (c.status && c.status.parentNode) { c.status.parentNode.removeChild(c.status); c.status = null; }
-      if (!c.rendered) {            // first words appear immediately
+      if (!c.rendered) {
         c.rendered = true;
         renderInto(c.content, c.text);
+        if (stick) { toBottom(false); }
         updateJump();
-      } else if (!c.timer) {        // then at most once per RENDER_INTERVAL
+      } else if (!c.timer) {
         c.timer = setTimeout(function () {
           c.timer = null;
-          if (current === c) { renderInto(c.content, c.text); updateJump(); }
+          if (current === c) {
+            renderInto(c.content, c.text);
+            if (stick) { toBottom(false); }
+            updateJump();
+          }
         }, RENDER_INTERVAL);
       }
     },
@@ -340,8 +454,10 @@
         renderInto(c.content, text);
         c.row._text = text;
         buildActions(c.row);
+        applyCollapseIfNeeded(c.row, c.body);
       }
       refreshRegenerate();
+      ensureScrollable();
       updateJump();
     },
 
@@ -361,8 +477,9 @@
     },
 
     scrollEnd: function () {
-      if (document.getElementById('empty')) { window.scrollTo(0, 0); return; }   // empty chat: nothing to scroll to
-      if (current) { updateJump(); return; }   // keyboard moved while a reply is streaming: leave the reader where they are
+      ensureScrollable();
+      if (document.getElementById('empty')) { window.scrollTo(0, 0); return; }
+      if (current) { updateJump(); return; }
       stick = true;
       toBottom(true);
     }
@@ -381,5 +498,8 @@
     }
   }, false);
 
-  window.addEventListener('load', function () { post({ type: 'ready' }); }, false);
+  window.addEventListener('load', function () {
+    ensureScrollable();
+    post({ type: 'ready' });
+  }, false);
 })();

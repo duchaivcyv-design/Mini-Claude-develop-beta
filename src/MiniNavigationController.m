@@ -1,6 +1,7 @@
 #import "MiniNavigationController.h"
 #import "Theme.h"
 #import "Strings.h"
+#import "AppSettings.h"
 
 @interface MiniNavigationController ()
 @property (assign, nonatomic) BOOL transitioning;
@@ -85,7 +86,7 @@
 }
 
 - (void)applyPendingBarStyle {
-    NSString *signature = [NSString stringWithFormat:@"%ld|%d", (long)[Theme skin], [Theme darkMode] ? 1 : 0];
+    NSString *signature = [NSString stringWithFormat:@"%ld|%d|%ld", (long)[Theme skin], [Theme darkMode] ? 1 : 0, (long)[AppSettings fontStyle]];
     if ([signature isEqualToString:self.barSignature]) return;   // e.g. only the wallpaper changed
     self.barSignature = signature;
     [Theme styleNavigationBar:self.navigationBar];

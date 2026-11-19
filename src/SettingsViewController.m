@@ -11,6 +11,230 @@
 #import "KeyTier.h"
 #import "ModelStore.h"
 
+#pragma mark - Font / Message Preview Screen
+
+@interface FontScalePreviewViewController : UIViewController
+@property (strong, nonatomic) UISlider *scaleSlider;
+@property (strong, nonatomic) UILabel *percentLabel;
+@property (strong, nonatomic) UIView *previewContainer;
+@property (strong, nonatomic) UIView *aiBubble;
+@property (strong, nonatomic) UILabel *aiLabel;
+@property (strong, nonatomic) UIView *userBubble;
+@property (strong, nonatomic) UILabel *userLabel;
+@property (strong, nonatomic) NSLayoutConstraint *aiBubbleMaxWidthConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *userBubbleMaxWidthConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *aiTopPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *aiBottomPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *aiLeftPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *aiRightPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *userTopPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *userBottomPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *userLeftPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *userRightPaddingConstraint;
+@property (strong, nonatomic) NSLayoutConstraint *bubbleGapConstraint;
+@end
+
+@implementation FontScalePreviewViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"C\u1EE1 ch\u1EEF";
+    self.view.backgroundColor = [Theme background];
+
+    CGFloat initialScale = [AppSettings uiScale];
+
+    // Khung preview tin nhắn
+    self.previewContainer = [[UIView alloc] init];
+    self.previewContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    self.previewContainer.backgroundColor = [Theme surface];
+    self.previewContainer.layer.cornerRadius = 16;
+    self.previewContainer.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    self.previewContainer.layer.borderColor = [Theme border].CGColor;
+    [self.view addSubview:self.previewContainer];
+
+    // Bong bóng tin nhắn AI
+    self.aiBubble = [[UIView alloc] init];
+    self.aiBubble.translatesAutoresizingMaskIntoConstraints = NO;
+    self.aiBubble.backgroundColor = [Theme background];
+    self.aiBubble.layer.cornerRadius = 14;
+    self.aiBubble.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    self.aiBubble.layer.borderColor = [Theme border].CGColor;
+    [self.previewContainer addSubview:self.aiBubble];
+
+    self.aiLabel = [[UILabel alloc] init];
+    self.aiLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.aiLabel.numberOfLines = 0;
+    self.aiLabel.textColor = [Theme text];
+    self.aiLabel.text = @"K\u00E9o thanh tr\u01B0\u1EE3t b\u00EAn d\u01B0\u1EDBi \u0111\u1EC3 xem tr\u01B0\u1EDBc c\u1EA3 c\u1EE1 ch\u1EEF v\u00E0 \u0111\u1ED9 r\u1ED9ng khung chat.";
+    [self.aiBubble addSubview:self.aiLabel];
+
+    // Bong bóng tin nhắn người dùng
+    self.userBubble = [[UIView alloc] init];
+    self.userBubble.translatesAutoresizingMaskIntoConstraints = NO;
+    self.userBubble.backgroundColor = [Theme accent];
+    self.userBubble.layer.cornerRadius = 14;
+    [self.previewContainer addSubview:self.userBubble];
+
+    self.userLabel = [[UILabel alloc] init];
+    self.userLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.userLabel.numberOfLines = 0;
+    self.userLabel.textColor = [UIColor whiteColor];
+    self.userLabel.text = @"Khung n\u00E0y s\u1EBD co gi\u00E3n theo t\u1EF7 l\u1EC7 b\u1EA1n ch\u1ECDn.";
+    [self.userBubble addSubview:self.userLabel];
+
+    // Card điều khiển thanh trượt
+    UIView *controlCard = [[UIView alloc] init];
+    controlCard.translatesAutoresizingMaskIntoConstraints = NO;
+    controlCard.backgroundColor = [Theme surface];
+    controlCard.layer.cornerRadius = 14;
+    controlCard.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    controlCard.layer.borderColor = [Theme border].CGColor;
+    [self.view addSubview:controlCard];
+
+    UILabel *titleLabel = [[UILabel alloc] init];
+    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    titleLabel.text = @"T\u1EF7 l\u1EC7 hi\u1EC3n th\u1ECB";
+    titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    titleLabel.textColor = [Theme text];
+    [controlCard addSubview:titleLabel];
+
+    self.percentLabel = [[UILabel alloc] init];
+    self.percentLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.percentLabel.font = [UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightSemibold];
+    self.percentLabel.textColor = [Theme accent];
+    [controlCard addSubview:self.percentLabel];
+
+    self.scaleSlider = [[UISlider alloc] init];
+    self.scaleSlider.translatesAutoresizingMaskIntoConstraints = NO;
+    self.scaleSlider.minimumValue = 0.7f;
+    self.scaleSlider.maximumValue = 1.4f;
+    self.scaleSlider.value = (float)initialScale;
+    self.scaleSlider.tintColor = [Theme accent];
+    [self.scaleSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [controlCard addSubview:self.scaleSlider];
+
+    UIButton *resetButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    resetButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [resetButton setTitle:@"M\u1EB7c \u0111\u1ECBnh (100%)" forState:UIControlStateNormal];
+    [resetButton addTarget:self action:@selector(resetScale) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:resetButton];
+
+    // Ràng buộc padding động bên trong bong bóng
+    self.aiTopPaddingConstraint = [self.aiLabel.topAnchor constraintEqualToAnchor:self.aiBubble.topAnchor constant:10];
+    self.aiBottomPaddingConstraint = [self.aiLabel.bottomAnchor constraintEqualToAnchor:self.aiBubble.bottomAnchor constant:-10];
+    self.aiLeftPaddingConstraint = [self.aiLabel.leadingAnchor constraintEqualToAnchor:self.aiBubble.leadingAnchor constant:14];
+    self.aiRightPaddingConstraint = [self.aiLabel.trailingAnchor constraintEqualToAnchor:self.aiBubble.trailingAnchor constant:-14];
+    self.aiBubbleMaxWidthConstraint = [self.aiBubble.widthAnchor constraintLessThanOrEqualToAnchor:self.previewContainer.widthAnchor multiplier:0.78];
+
+    self.userTopPaddingConstraint = [self.userLabel.topAnchor constraintEqualToAnchor:self.userBubble.topAnchor constant:10];
+    self.userBottomPaddingConstraint = [self.userLabel.bottomAnchor constraintEqualToAnchor:self.userBubble.bottomAnchor constant:-10];
+    self.userLeftPaddingConstraint = [self.userLabel.leadingAnchor constraintEqualToAnchor:self.userBubble.leadingAnchor constant:14];
+    self.userRightPaddingConstraint = [self.userLabel.trailingAnchor constraintEqualToAnchor:self.userBubble.trailingAnchor constant:-14];
+    self.userBubbleMaxWidthConstraint = [self.userBubble.widthAnchor constraintLessThanOrEqualToAnchor:self.previewContainer.widthAnchor multiplier:0.78];
+
+    self.bubbleGapConstraint = [self.userBubble.topAnchor constraintEqualToAnchor:self.aiBubble.bottomAnchor constant:12];
+
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.previewContainer.topAnchor constraintEqualToAnchor:safe.topAnchor constant:16],
+        [self.previewContainer.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
+        [self.previewContainer.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+        [self.previewContainer.heightAnchor constraintGreaterThanOrEqualToConstant:210],
+
+        [self.aiBubble.topAnchor constraintEqualToAnchor:self.previewContainer.topAnchor constant:14],
+        [self.aiBubble.leadingAnchor constraintEqualToAnchor:self.previewContainer.leadingAnchor constant:14],
+        self.aiBubbleMaxWidthConstraint,
+        self.aiTopPaddingConstraint,
+        self.aiBottomPaddingConstraint,
+        self.aiLeftPaddingConstraint,
+        self.aiRightPaddingConstraint,
+
+        self.bubbleGapConstraint,
+        [self.userBubble.trailingAnchor constraintEqualToAnchor:self.previewContainer.trailingAnchor constant:-14],
+        [self.userBubble.bottomAnchor constraintLessThanOrEqualToAnchor:self.previewContainer.bottomAnchor constant:-14],
+        self.userBubbleMaxWidthConstraint,
+        self.userTopPaddingConstraint,
+        self.userBottomPaddingConstraint,
+        self.userLeftPaddingConstraint,
+        self.userRightPaddingConstraint,
+
+        [controlCard.topAnchor constraintEqualToAnchor:self.previewContainer.bottomAnchor constant:20],
+        [controlCard.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
+        [controlCard.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+
+        [titleLabel.topAnchor constraintEqualToAnchor:controlCard.topAnchor constant:14],
+        [titleLabel.leadingAnchor constraintEqualToAnchor:controlCard.leadingAnchor constant:16],
+
+        [self.percentLabel.centerYAnchor constraintEqualToAnchor:titleLabel.centerYAnchor],
+        [self.percentLabel.trailingAnchor constraintEqualToAnchor:controlCard.trailingAnchor constant:-16],
+
+        [self.scaleSlider.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:10],
+        [self.scaleSlider.leadingAnchor constraintEqualToAnchor:controlCard.leadingAnchor constant:16],
+        [self.scaleSlider.trailingAnchor constraintEqualToAnchor:controlCard.trailingAnchor constant:-16],
+        [self.scaleSlider.bottomAnchor constraintEqualToAnchor:controlCard.bottomAnchor constant:-14],
+
+        [resetButton.topAnchor constraintEqualToAnchor:controlCard.bottomAnchor constant:10],
+        [resetButton.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor]
+    ]];
+
+    [self applyScale:initialScale];
+}
+
+- (void)sliderChanged:(UISlider *)sender {
+    // Làm tròn bước 0.05 (5%) để dễ căn chỉnh
+    CGFloat stepped = roundf(sender.value * 20.0f) / 20.0f;
+    [AppSettings setUiScale:stepped];
+    [self applyScale:stepped];
+}
+
+- (void)resetScale {
+    self.scaleSlider.value = 1.0f;
+    [AppSettings setUiScale:1.0];
+    [self applyScale:1.0];
+}
+
+- (void)applyScale:(CGFloat)scale {
+    self.percentLabel.text = [NSString stringWithFormat:@"%ld%%", (long)llround(scale * 100.0)];
+
+    CGFloat fontSize = 16.0 * scale;
+    self.aiLabel.font = [UIFont systemFontOfSize:fontSize];
+    self.userLabel.font = [UIFont systemFontOfSize:fontSize];
+
+    CGFloat vPad = 10.0 * scale;
+    CGFloat hPad = 14.0 * scale;
+    self.aiTopPaddingConstraint.constant = vPad;
+    self.aiBottomPaddingConstraint.constant = -vPad;
+    self.aiLeftPaddingConstraint.constant = hPad;
+    self.aiRightPaddingConstraint.constant = -hPad;
+
+    self.userTopPaddingConstraint.constant = vPad;
+    self.userBottomPaddingConstraint.constant = -vPad;
+    self.userLeftPaddingConstraint.constant = hPad;
+    self.userRightPaddingConstraint.constant = -hPad;
+
+    self.bubbleGapConstraint.constant = 12.0 * scale;
+    self.aiBubble.layer.cornerRadius = 14.0 * scale;
+    self.userBubble.layer.cornerRadius = 14.0 * scale;
+
+    // Thu hẹp/mở rộng độ rộng tối đa của bong bóng theo tỷ lệ cỡ chữ (giới hạn an toàn trong khung preview)
+    CGFloat maxRatio = MIN(0.92, MAX(0.55, 0.78 * scale));
+    [self.view layoutIfNeeded];
+    self.aiBubbleMaxWidthConstraint.active = NO;
+    self.userBubbleMaxWidthConstraint.active = NO;
+    self.aiBubbleMaxWidthConstraint = [self.aiBubble.widthAnchor constraintLessThanOrEqualToAnchor:self.previewContainer.widthAnchor multiplier:maxRatio];
+    self.userBubbleMaxWidthConstraint = [self.userBubble.widthAnchor constraintLessThanOrEqualToAnchor:self.previewContainer.widthAnchor multiplier:maxRatio];
+    self.aiBubbleMaxWidthConstraint.active = YES;
+    self.userBubbleMaxWidthConstraint.active = YES;
+
+    [UIView animateWithDuration:0.08 animations:^{
+        [self.view layoutIfNeeded];
+    }];
+}
+
+@end
+
+#pragma mark - SettingsViewController
+
 // Order on screen: appearance & language on top, then the API keys, then the AI settings, then data & info, then credits.
 typedef NS_ENUM(NSInteger, SettingsSection) {
     SettingsSectionLook = 0,
@@ -43,10 +267,15 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     [self.view addSubview:self.tableView];
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleUIScaleChanged) name:@"UIScaleDidChangeNotification" object:nil];
 }
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)handleUIScaleChanged {
+    if (self.view.window) [self.tableView reloadData];
 }
 
 - (void)applyTheme {
@@ -85,6 +314,11 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     return L(@"language_auto");
 }
 
+- (NSString *)fontSizeSummary {
+    long pct = (long)llround([AppSettings uiScale] * 100.0);
+    return [NSString stringWithFormat:@"%ld%%", pct];
+}
+
 #pragma mark - UITableViewDataSource
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -92,7 +326,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == SettingsSectionLook) return 2;      // look, language
+    if (section == SettingsSectionLook) return 3;      // look, language, font size
     if (section == SettingsSectionKeys) return 3;      // Gemini key, Claude key, kind of Gemini key
     if (section == SettingsSectionAssistant) return 4;
     if (section == SettingsSectionCredits) return 2;   // TaoJB, PucSaur
@@ -127,6 +361,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     switch (indexPath.section) {
         case SettingsSectionCredits:
             cell.textLabel.text = indexPath.row == 0 ? @"TaoJB" : @"PucSaur";
+            cell.detailTextLabel.text = L(@"main_developer");
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
             break;
         case SettingsSectionKeys: {
@@ -162,9 +397,12 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
             if (indexPath.row == 0) {
                 cell.textLabel.text = L(@"settings_row_look");
                 cell.detailTextLabel.text = [self appearanceSummary];
-            } else {
+            } else if (indexPath.row == 1) {
                 cell.textLabel.text = L(@"language");
                 cell.detailTextLabel.text = [self languageName];
+            } else {
+                cell.textLabel.text = @"C\u1EE1 ch\u1EEF";
+                cell.detailTextLabel.text = [self fontSizeSummary];
             }
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             break;
@@ -225,8 +463,10 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
         case SettingsSectionLook:
             if (indexPath.row == 0) {
                 [self.navigationController pushViewController:[[AppearanceViewController alloc] init] animated:YES];
-            } else {
+            } else if (indexPath.row == 1) {
                 [self chooseLanguage];
+            } else {
+                [self.navigationController pushViewController:[[FontScalePreviewViewController alloc] init] animated:YES];
             }
             break;
         default:   // SettingsSectionData

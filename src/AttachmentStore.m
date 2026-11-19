@@ -12,13 +12,14 @@ static const CGFloat    kImageMaxSide      = 1440;                 // Gemini sca
 static const CGFloat    kThumbMaxSide      = 160;
 static const NSUInteger kMaxPDFBytes       = 10 * 1024 * 1024;
 static const NSUInteger kMaxOfficeBytes    = 15 * 1024 * 1024;     // .docx / .pptx archive size
-static const NSUInteger kMaxTextFileBytes  = 4 * 1024 * 1024;
+static const NSUInteger kMaxTextFileBytes  = 256 * 1024 * 1024;    // Hỗ trợ file log/code/txt lớn (~1 triệu dòng+)
 static const NSUInteger kMaxImageFileBytes = 40 * 1024 * 1024;
 static const unsigned long long kMaxVideoFileBytes = 100ULL * 1024ULL * 1024ULL;
 static const NSTimeInterval kMaxVideoDuration = 120.0;
 static const NSUInteger kMaxVideoFrames = 6;
-static const NSUInteger kMaxTextChars      = 4 * 1024 * 1024;
+static const NSUInteger kMaxTextChars      = 50 * 1024 * 1024;     // Cho phép lưu tới 50 triệu ký tự, không cắt ngang file 1 triệu dòng
 static const unsigned long long kMaxZipFileBytes = 200ULL * 1024ULL * 1024ULL;
+static const NSUInteger kStreamWriteChunkBytes = 1024 * 1024;      // Ghi file theo từng khối 1MB để tránh spike RAM
 
 static NSString *RootDir(void) {
     static NSString *dir = nil;
@@ -36,6 +37,35 @@ static BOOL SafeComponent(id value) {
     if (![value isKindOfClass:[NSString class]]) return NO;
     NSString *s = value;
     return s.length > 0 && [s rangeOfString:@"/"].location == NSNotFound && [s rangeOfString:@".."].location == NSNotFound;
+}
+
+static BOOL WriteUTF8StringToPath(NSString *string, NSString *filePath) {
+    if (!string || !filePath) return NO;
+    NSData *utf8 = [string dataUsingEncoding:NSUTF8StringEncoding];
+    if (!utf8) return NO;
+    if (utf8.length <= kStreamWriteChunkBytes * 4) {
+        return [utf8 writeToFile:filePath options:NSDataWritingAtomic error:nil];
+    }
+    [[NSFileManager defaultManager] createFileAtPath:filePath contents:nil attributes:nil];
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:filePath];
+    if (!handle) return NO;
+    @try {
+        NSUInteger offset = 0;
+        while (offset < utf8.length) {
+            NSUInteger len = MIN(kStreamWriteChunkBytes, utf8.length - offset);
+            NSData *chunk = [NSData dataWithBytesNoCopy:(void *)((const uint8_t *)utf8.bytes + offset)
+                                                 length:len
+                                           freeWhenDone:NO];
+            [handle writeData:chunk];
+            offset += len;
+        }
+        [handle synchronizeFile];
+        return YES;
+    } @catch (__unused NSException *ex) {
+        return NO;
+    } @finally {
+        [handle closeFile];
+    }
 }
 
 @implementation AttachmentStore
@@ -125,7 +155,6 @@ static BOOL SafeComponent(id value) {
     NSString *dir = [self directoryForConversation:conversationId create:YES];
     if (!dir) { if (errorKey) *errorKey = @"att_err_unreadable"; return nil; }
 
-    // ImageIO decodes straight to a size-limited bitmap and applies the EXIF rotation, without ever holding the full-size image.
     CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
     if (!source) { if (errorKey) *errorKey = @"att_err_unreadable"; return nil; }
     NSDictionary *options = @{ (__bridge id)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
@@ -166,40 +195,58 @@ static BOOL SafeComponent(id value) {
 }
 
 + (NSString *)decodeText:(NSData *)data {
+    if (data.length == 0) return nil;
     const uint8_t *bytes = data.bytes;
-    NSUInteger probe = MIN(data.length, (NSUInteger)8192);
+    NSUInteger probe = MIN(data.length, (NSUInteger)65536);
     BOOL utf16BOM = probe >= 2 && ((bytes[0] == 0xFF && bytes[1] == 0xFE) || (bytes[0] == 0xFE && bytes[1] == 0xFF));
     if (!utf16BOM) {
         for (NSUInteger i = 0; i < probe; i++) {
-            if (bytes[i] == 0) return nil;   // NUL bytes: this is a binary file, not text
+            if (bytes[i] == 0) return nil;   // NUL bytes trong vùng dò đầu: tệp nhị phân
         }
     }
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (text) return text;
-    NSString *converted = nil;
-    [NSString stringEncodingForData:data encodingOptions:nil convertedString:&converted usedLossyConversion:NULL];
-    if (converted.length > 0) return converted;
+    if (data.length <= 16 * 1024 * 1024) {
+        NSString *converted = nil;
+        [NSString stringEncodingForData:data encodingOptions:nil convertedString:&converted usedLossyConversion:NULL];
+        if (converted.length > 0) return converted;
+    }
     return [[NSString alloc] initWithData:data encoding:NSWindowsCP1252StringEncoding];
 }
 
 + (NSDictionary *)saveText:(NSString *)text name:(NSString *)name conversation:(NSString *)conversationId errorKey:(NSString **)errorKey {
-    NSString *trimmed = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (trimmed.length == 0) { if (errorKey) *errorKey = @"att_err_no_text"; return nil; }
-    if (trimmed.length > kMaxTextChars) {
-        NSRange safe = [trimmed rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, kMaxTextChars)];
-        trimmed = [[trimmed substringWithRange:safe] stringByAppendingString:@"\n[… truncated]"];
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) {
+        if (errorKey) *errorKey = @"att_err_no_text";
+        return nil;
     }
-    NSString *dir = [self directoryForConversation:conversationId create:YES];
-    NSData *utf8 = [trimmed dataUsingEncoding:NSUTF8StringEncoding];
-    if (!dir || utf8.length == 0) { if (errorKey) *errorKey = @"att_err_unreadable"; return nil; }
+    NSString *payload = text;
+    if (payload.length > kMaxTextChars) {
+        NSRange safe = [payload rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, kMaxTextChars)];
+        payload = [payload substringWithRange:safe];
+    }
+    // Kiểm tra nhanh có ký tự không rỗng hay không mà không trim copy toàn bộ chuỗi 1 triệu dòng nếu không cần
+    NSCharacterSet *nonWhitespace = [[NSCharacterSet whitespaceAndNewlineCharacterSet] invertedSet];
+    if ([payload rangeOfCharacterFromSet:nonWhitespace].location == NSNotFound) {
+        if (errorKey) *errorKey = @"att_err_no_text";
+        return nil;
+    }
 
-    NSString *attachmentId = [[NSUUID UUID] UUIDString];
-    NSString *file = [attachmentId stringByAppendingString:@".txt"];
-    if (![utf8 writeToFile:[dir stringByAppendingPathComponent:file] options:NSDataWritingAtomic error:nil]) {
+    NSString *dir = [self directoryForConversation:conversationId create:YES];
+    if (!dir) {
         if (errorKey) *errorKey = @"att_err_unreadable";
         return nil;
     }
-    return @{ @"id": attachmentId, @"kind": @"text", @"name": name, @"mime": @"text/plain", @"file": file, @"bytes": @(utf8.length) };
+
+    NSString *attachmentId = [[NSUUID UUID] UUIDString];
+    NSString *file = [attachmentId stringByAppendingString:@".txt"];
+    NSString *fullPath = [dir stringByAppendingPathComponent:file];
+    if (!WriteUTF8StringToPath(payload, fullPath)) {
+        if (errorKey) *errorKey = @"att_err_unreadable";
+        return nil;
+    }
+
+    unsigned long long writtenBytes = [[[NSFileManager defaultManager] attributesOfItemAtPath:fullPath error:nil][NSFileSize] unsignedLongLongValue];
+    return @{ @"id": attachmentId, @"kind": @"text", @"name": name, @"mime": @"text/plain", @"file": file, @"bytes": @(writtenBytes) };
 }
 
 + (NSDictionary *)importOffice:(NSData *)data isPPTX:(BOOL)isPPTX name:(NSString *)name conversation:(NSString *)conversationId errorKey:(NSString **)errorKey {
@@ -325,8 +372,6 @@ static BOOL SafeComponent(id value) {
         char *rawText = office_zip_text(data.bytes, data.length, &zipError);
         NSString *archiveText = rawText ? [NSString stringWithUTF8String:rawText] : nil;
         if (rawText) free(rawText);
-        // ZIP luôn gửi được: nếu trích xuất văn bản được thì gửi nội dung, nếu không (nhị phân/đã mã hóa)
-        // thì gửi manifest tên + dung lượng để AI biết có file này. Không bao giờ báo lỗi.
         if (archiveText.length == 0) {
             NSString *sizeStr = [NSByteCountFormatter stringFromByteCount:data.length countStyle:NSByteCountFormatterCountStyleFile];
             archiveText = [NSString stringWithFormat:@"[Tệp ZIP đính kèm]\nTên: %@\nDung lượng: %@\nLưu ý: archive chứa nội dung nhị phân hoặc đã mã hóa, không trích xuất được văn bản. Người dùng đã gửi file này đính kèm.", name, sizeStr];
@@ -340,7 +385,6 @@ static BOOL SafeComponent(id value) {
         return nil;
     }
 
-    // Everything else: accept it only if it really is text (txt, md, csv, json, source code, ...).
     if (data.length > kMaxTextFileBytes) { if (errorKey) *errorKey = @"att_err_too_large"; return nil; }
     NSString *text = [self decodeText:data];
     if (!text) { if (errorKey) *errorKey = @"att_err_unsupported"; return nil; }

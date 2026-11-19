@@ -5,12 +5,28 @@
   // Uses markdown-it, highlight.js and KaTeX from vendor.js. Plain ES5: iOS 12's WebKit is Safari 12.
 
   var copyLabel = 'Copy';
-  var CACHE_LIMIT = 400;
+  var CACHE_LIMIT = 1200;
   var hlCache = {}, hlCount = 0;
   var mathCache = {}, mathCount = 0;
 
   function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function putCache(cacheObj, counterName, key, val) {
+    if (counterName === 'hl') {
+      if (hlCount >= CACHE_LIMIT) { hlCache = {}; hlCount = 0; }
+      if (cacheObj[key] === undefined) { hlCount++; }
+      cacheObj[key] = val;
+    } else {
+      if (mathCount >= CACHE_LIMIT) { mathCache = {}; mathCount = 0; }
+      if (cacheObj[key] === undefined) { mathCount++; }
+      cacheObj[key] = val;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -30,9 +46,7 @@
     } catch (e) {
       html = escapeHtml(code);
     }
-    if (hlCount > CACHE_LIMIT) { hlCache = {}; hlCount = 0; }
-    hlCache[key] = html;
-    hlCount++;
+    putCache(hlCache, 'hl', key, html);
     return html;
   }
 
@@ -43,10 +57,10 @@
     try {
       html = window.katex.renderToString(tex, {
         displayMode: display,
-        throwOnError: false,   // a broken formula is shown as red source text instead of failing
-        strict: 'ignore',      // accented letters inside \text{} are fine
+        throwOnError: false,
+        strict: 'ignore',
         output: 'html',
-        trust: false,          // no \href, \url, \includegraphics ...
+        trust: false,
         maxExpand: 1000,
         maxSize: 50,
         errorColor: '#B3402A'
@@ -54,9 +68,7 @@
     } catch (e) {
       html = '<code>' + escapeHtml(tex) + '</code>';
     }
-    if (mathCount > CACHE_LIMIT) { mathCache = {}; mathCount = 0; }
-    mathCache[key] = html;
-    mathCount++;
+    putCache(mathCache, 'math', key, html);
     return html;
   }
 
@@ -70,8 +82,6 @@
     return '\uE000' + (items.length - 1) + '\uE001';
   }
 
-  // Splits the text into fenced-code segments and normal segments. An unclosed fence stays code until the end,
-  // which is exactly what a half-streamed code block should look like.
   function splitFences(src) {
     var lines = src.split('\n'), segs = [], cur = [], inFence = false, fch = '', flen = 0;
     function flush(isCode) {
@@ -102,7 +112,7 @@
 
       if (c === '\\') {
         var nx = s.charAt(i + 1);
-        if (nx === '$' || nx === '\\') { out += c + nx; i += 2; continue; }   // \$ stays a literal dollar; \\ is not an escape for what follows
+        if (nx === '$' || nx === '\\') { out += c + nx; i += 2; continue; }
         if (nx === '[' || nx === '(') {
           var close = nx === '[' ? '\\]' : '\\)';
           var end = s.indexOf(close, i + 2);
@@ -111,7 +121,7 @@
         out += c; i++; continue;
       }
 
-      if (c === '`') {   // inline code: leave untouched
+      if (c === '`') {
         var run = 1;
         while (s.charAt(i + run) === '`') { run++; }
         var ticks = s.substr(i, run);
@@ -121,23 +131,21 @@
       }
 
       if (c === '$') {
-        if (s.charAt(i + 1) === '$') {   // $$ ... $$
+        if (s.charAt(i + 1) === '$') {
           var e2 = s.indexOf('$$', i + 2);
           if (e2 > 0) { out += hold(items, s.substring(i + 2, e2), true); i = e2 + 2; continue; }
-          out += '$$'; i += 2; continue;   // not closed yet (still streaming): show as text for now
+          out += '$$'; i += 2; continue;
         }
-        // $ ... $ : the opening $ needs a non-space after it, the closing $ a non-space before it and no digit after it,
-        // so "costs $5 and $10" stays text while "$x^2$" becomes math.
         var after = s.charAt(i + 1);
         if (after && !/\s/.test(after)) {
           var j = i + 1, found = -1;
           while (j < n) {
             var d = s.charAt(j);
-            if (d === '\n' && s.charAt(j + 1) === '\n') { break; }   // math never spans a blank line
+            if (d === '\n' && s.charAt(j + 1) === '\n') { break; }
             if (d === '\\') { j += 2; continue; }
             if (d === '$') {
               if (!/\s/.test(s.charAt(j - 1)) && !/[0-9]/.test(s.charAt(j + 1))) { found = j; }
-              break;   // the first following $ decides
+              break;
             }
             j++;
           }
@@ -155,6 +163,12 @@
   // markdown-it
   // ---------------------------------------------------------------------------------------------
 
+  function isSafeImageSrc(src) {
+    if (!src) return false;
+    var trimmed = String(src).replace(/^\s+|\s+$/g, '');
+    return /^https?:\/\//i.test(trimmed) || /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(trimmed);
+  }
+
   function codeBlock(code, lang) {
     lang = (lang || '').toLowerCase();
     var label = lang || 'code';
@@ -166,7 +180,6 @@
   var md = null;
   try {
     md = window.markdownit({ html: false, linkify: true, breaks: true, typographer: false });
-    // "main.py" or "README.md" must not turn into links just because .py / .md are country domains.
     md.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
     md.renderer.rules.fence = function (tokens, idx) {
       var info = (tokens[idx].info || '').trim().split(/\s+/)[0];
@@ -177,6 +190,15 @@
     };
     md.renderer.rules.table_open = function () { return '<div class="tablewrap"><table>\n'; };
     md.renderer.rules.table_close = function () { return '</table></div>\n'; };
+    md.renderer.rules.image = function (tokens, idx) {
+      var tok = tokens[idx];
+      var src = tok.attrGet('src') || '';
+      var alt = tok.content || (tok.children && tok.children.length ? tok.children.map(function (c) { return c.content || ''; }).join('') : 'Image');
+      if (!isSafeImageSrc(src)) {
+        return '<span>' + escapeHtml(alt) + '</span>';
+      }
+      return '<img class="generated-image" src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt) + '" loading="lazy" />';
+    };
   } catch (e) {
     md = null;
   }

@@ -10,9 +10,11 @@
 @property (copy, nonatomic) void (^partialBlock)(NSString *);
 @property (copy, nonatomic) void (^finalBlock)(NSString *);
 @property (copy, nonatomic) void (^errorBlock)(NSString *);
+@property (copy, nonatomic) void (^speakCompletionBlock)(void);
 @property (strong, nonatomic) AVSpeechSynthesizer *synthesizer;
 @property (assign, nonatomic) BOOL recording;
-@property (assign, nonatomic) NSInteger currentVoiceIndex; // Dùng để xoay vòng 3 giọng nói AI khác nhau
+@property (assign, nonatomic) NSInteger currentVoiceIndex;
+@property (assign, nonatomic) BOOL manualVoiceSelection;
 @end
 
 @implementation VoiceChatManager
@@ -31,7 +33,7 @@
         NSLocale *vi = [[NSLocale alloc] initWithLocaleIdentifier:@"vi-VN"];
         _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:vi];
         if (!_recognizer) {
-            _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale currentLocale]]; // fallback
+            _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale currentLocale]];
         }
         if (_recognizer) {
             _recognizer.delegate = self;
@@ -40,6 +42,7 @@
         _synthesizer = [[AVSpeechSynthesizer alloc] init];
         _synthesizer.delegate = self;
         _currentVoiceIndex = 0;
+        _manualVoiceSelection = NO;
     }
     return self;
 }
@@ -72,6 +75,7 @@
         if (error) error(@"Đang ghi âm rồi.");
         return;
     }
+    [self stopSpeaking];
     self.partialBlock = partial;
     self.finalBlock = final;
     self.errorBlock = error;
@@ -79,9 +83,10 @@
     NSError *sessionError = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayAndRecord
-             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth
+                    mode:AVAudioSessionModeMeasurement
+                 options:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth
                    error:&sessionError];
-    [session setActive:YES error:&sessionError];
+    [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&sessionError];
 
     self.request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
     self.request.shouldReportPartialResults = YES;
@@ -112,10 +117,11 @@
 
     AVAudioInputNode *node = self.engine.inputNode;
     AVAudioFormat *format = [node outputFormatForBus:0];
+    [node removeTapOnBus:0];
     [node installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         [weakSelf.request appendAudioPCMBuffer:buffer];
     }];
-    
+
     [self.engine prepare];
     NSError *startError = nil;
     if (![self.engine startAndReturnError:&startError]) {
@@ -131,62 +137,126 @@
     if (self.engine.isRunning) {
         [self.engine stop];
     }
-    [self.engine.inputNode removeTapOnBus:0];
+    @try {
+        [self.engine.inputNode removeTapOnBus:0];
+    } @catch (__unused NSException *ex) {}
     [self.request endAudio];
     [self.task cancel];
     self.task = nil;
     self.request = nil;
     self.recording = NO;
-    [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
 }
 
-#pragma mark - Đọc văn bản AI bằng giọng nói (TTS) với 3 phong cách
+#pragma mark - Đọc văn bản AI bằng giọng nói (TTS)
 
-- (void)speak:(NSString *)text {
-    if (text.length == 0) return;
-    [self stopSpeaking];
+- (void)activatePlaybackSession {
+    NSError *err = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setCategory:AVAudioSessionCategoryPlayback
+                    mode:AVAudioSessionModeSpokenAudio
+                 options:AVAudioSessionCategoryOptionDuckOthers | AVAudioSessionCategoryOptionAllowBluetooth
+                   error:&err];
+    [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&err];
+}
 
-    AVSpeechUtterance *utter = [[AVSpeechUtterance alloc] initWithString:text];
-    
-    // Lấy giọng tiếng Việt hệ thống
-    NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
-    AVSpeechSynthesisVoice *selectedVoice = nil;
-    for (AVSpeechSynthesisVoice *v in voices) {
-        if ([v.language hasPrefix:@"vi"]) {
-            selectedVoice = v;
-            break;
-        }
+- (NSString *)cleanTextForSpeech:(NSString *)raw {
+    if (raw.length == 0) return @"";
+    NSString *cleaned = raw;
+    // Loại bỏ code block dài để đọc tự nhiên hơn
+    NSError *regexError = nil;
+    NSRegularExpression *codeBlockRegex = [NSRegularExpression regularExpressionWithPattern:@"```[\\s\\S]*?```" options:0 error:&regexError];
+    if (codeBlockRegex) {
+        cleaned = [codeBlockRegex stringByReplacingMatchesInString:cleaned options:0 range:NSMakeRange(0, cleaned.length) withTemplate:@" Đoạn mã nguồn. "];
     }
-    utter.voice = selectedVoice ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"] ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
+    NSRegularExpression *mdSymRegex = [NSRegularExpression regularExpressionWithPattern:@"[#*_`~>]+" options:0 error:&regexError];
+    if (mdSymRegex) {
+        cleaned = [mdSymRegex stringByReplacingMatchesInString:cleaned options:0 range:NSMakeRange(0, cleaned.length) withTemplate:@" "];
+    }
+    cleaned = [cleaned stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (cleaned.length > 4000) {
+        NSRange r = [cleaned rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 4000)];
+        cleaned = [[cleaned substringWithRange:r] stringByAppendingString:@"... Hết phần tóm tắt."];
+    }
+    return cleaned;
+}
 
-    // Xoay vòng tự động qua 3 phong cách giọng nói AI khác nhau
-    // 0: Giọng nữ tự nhiên (Sáng, mượt mà)
-    // 1: Giọng nam trầm ấm (Trầm, truyền cảm)
-    // 2: Giọng hoạt bát/biểu cảm (Tốc độ nhanh, cao độ linh hoạt)
-    switch (self.currentVoiceIndex % 3) {
+- (void)speak:(NSString *)text voiceIndex:(NSInteger)voiceIndex completion:(void (^)(void))completion {
+    NSString *spoken = [self cleanTextForSpeech:text];
+    if (spoken.length == 0) {
+        if (completion) completion();
+        return;
+    }
+    [self stopRecording];
+    [self stopSpeaking];
+    [self activatePlaybackSession];
+
+    self.speakCompletionBlock = completion;
+    NSInteger idx = ((voiceIndex % 3) + 3) % 3;
+
+    AVSpeechUtterance *utter = [[AVSpeechUtterance alloc] initWithString:spoken];
+    NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
+    NSMutableArray<AVSpeechSynthesisVoice *> *viVoices = [NSMutableArray array];
+    for (AVSpeechSynthesisVoice *v in voices) {
+        if ([v.language hasPrefix:@"vi"]) [viVoices addObject:v];
+    }
+    if (viVoices.count > 0) {
+        utter.voice = viVoices[(NSUInteger)idx % viVoices.count];
+    } else {
+        utter.voice = [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"] ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
+    }
+
+    switch (idx) {
         case 0:
             utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02;
-            utter.pitchMultiplier = 1.1;
+            utter.pitchMultiplier = 1.12;
             break;
         case 1:
-            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95;
-            utter.pitchMultiplier = 0.82;
+            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94;
+            utter.pitchMultiplier = 0.80;
             break;
-        case 2:
-            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.08;
+        default:
+            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.10;
             utter.pitchMultiplier = 1.25;
             break;
     }
-    
-    // Tăng chỉ số để lần gọi `speak:` tiếp theo đổi sang giọng khác
-    self.currentVoiceIndex = (self.currentVoiceIndex + 1) % 3;
 
     [self.synthesizer speakUtterance:utter];
+}
+
+- (void)speak:(NSString *)text completion:(void (^)(void))completion {
+    NSInteger idx = self.currentVoiceIndex;
+    if (!self.manualVoiceSelection) {
+        self.currentVoiceIndex = (self.currentVoiceIndex + 1) % 3;
+    }
+    [self speak:text voiceIndex:idx completion:completion];
+}
+
+- (void)speak:(NSString *)text {
+    [self speak:text completion:nil];
 }
 
 - (void)stopSpeaking {
     if (self.synthesizer.isSpeaking) {
         [self.synthesizer stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
+    }
+    self.speakCompletionBlock = nil;
+}
+
+#pragma mark - AVSpeechSynthesizerDelegate
+
+- (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didFinishSpeechUtterance:(AVSpeechUtterance *)utterance {
+    void (^done)(void) = self.speakCompletionBlock;
+    self.speakCompletionBlock = nil;
+    if (done) {
+        dispatch_async(dispatch_get_main_queue(), done);
+    }
+}
+
+- (void)speechSynthesizer:(AVSpeechSynthesizer *)synthesizer didCancelSpeechUtterance:(AVSpeechUtterance *)utterance {
+    void (^done)(void) = self.speakCompletionBlock;
+    self.speakCompletionBlock = nil;
+    if (done) {
+        dispatch_async(dispatch_get_main_queue(), done);
     }
 }
 

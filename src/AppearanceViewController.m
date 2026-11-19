@@ -8,7 +8,8 @@ typedef NS_ENUM(NSInteger, AppearanceSection) {
     AppearanceSectionMode = 0,    // light / dark pictures + "Tự động"
     AppearanceSectionSkin,
     AppearanceSectionWallpaper,
-    AppearanceSectionTextScale,   // thu nho / phong to chu & giao dien
+    AppearanceSectionTextScale,   // text size slider
+    AppearanceSectionFont,        // Claude font / system font
     AppearanceSectionIcon,
     AppearanceSectionCount
 };
@@ -109,6 +110,71 @@ static const CGSize kModePreviewSize = { 84, 148 };
     [self.contentView bringSubviewToFront:self.darkHit];
 }
 
+@end
+
+#pragma mark - Text size slider cell
+
+static const CGFloat kScaleLevels[5] = { 0.85, 0.92, 1.0, 1.08, 1.15 };
+
+static NSInteger ScaleLevelIndex(CGFloat value) {
+    NSInteger best = 0;
+    for (NSInteger i = 1; i < 5; i++) {
+        if (fabs(kScaleLevels[i] - value) < fabs(kScaleLevels[best] - value)) best = i;
+    }
+    return best;
+}
+
+static NSString *ScaleLevelName(NSInteger index) {
+    switch (index) {
+        case 0: return L(@"size_small");
+        case 1: return L(@"size_med_small");
+        case 2: return L(@"size_default");
+        case 3: return L(@"size_large");
+        default: return L(@"size_xlarge");
+    }
+}
+
+@interface TextSizeCell : UITableViewCell
+@property (strong, nonatomic) UILabel *nameLabel;
+@property (strong, nonatomic) UILabel *valueLabel;
+@property (strong, nonatomic) UILabel *smallA;
+@property (strong, nonatomic) UILabel *bigA;
+@property (strong, nonatomic) UISlider *slider;
+@end
+
+@implementation TextSizeCell
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
+    if (self) {
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.nameLabel = [[UILabel alloc] init];
+        self.nameLabel.font = [UIFont systemFontOfSize:17];
+        self.valueLabel = [[UILabel alloc] init];
+        self.valueLabel.font = [UIFont systemFontOfSize:15];
+        self.valueLabel.textAlignment = NSTextAlignmentRight;
+        self.smallA = [[UILabel alloc] init];
+        self.smallA.text = @"A";
+        self.smallA.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        self.bigA = [[UILabel alloc] init];
+        self.bigA.text = @"A";
+        self.bigA.font = [UIFont systemFontOfSize:22 weight:UIFontWeightMedium];
+        self.slider = [[UISlider alloc] init];
+        self.slider.minimumValue = 0;
+        self.slider.maximumValue = 4;
+        for (UIView *view in @[self.nameLabel, self.valueLabel, self.smallA, self.bigA, self.slider]) [self.contentView addSubview:view];
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat width = self.contentView.bounds.size.width;
+    self.nameLabel.frame = CGRectMake(16, 12, width - 140, 24);
+    self.valueLabel.frame = CGRectMake(width - 16 - 120, 12, 120, 24);
+    self.smallA.frame = CGRectMake(16, 50, 14, 24);
+    self.bigA.frame = CGRectMake(width - 16 - 18, 48, 18, 28);
+    self.slider.frame = CGRectMake(40, 48, width - 40 - 44, 28);
+}
 @end
 
 @interface AppearanceViewController ()
@@ -248,6 +314,7 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionMode:      return 2;   // picture row + "Tự động"
         case AppearanceSectionWallpaper: return kWallpaperRowCount;
         case AppearanceSectionTextScale: return 1;
+        case AppearanceSectionFont:      return 2;   // Claude font, system font
         default:                         return ThemeSkinCount;   // icons: default + one per skin
     }
 }
@@ -257,7 +324,8 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionMode:      return L(@"appearance_mode_header");
         case AppearanceSectionSkin:      return L(@"appearance_skin_header");
         case AppearanceSectionWallpaper: return L(@"appearance_wallpaper_header");
-        case AppearanceSectionTextScale: return @"Co chu & giao dien";
+        case AppearanceSectionTextScale: return L(@"text_size_header");
+        case AppearanceSectionFont:      return L(@"font_header");
         case AppearanceSectionIcon:      return L(@"appearance_icon_header");
         default:                         return nil;
     }
@@ -267,6 +335,7 @@ static NSCache *ImageCache(void) {
     switch (section) {
         case AppearanceSectionSkin:      return L(@"appearance_skin_footer");
         case AppearanceSectionMode:      return L(@"appearance_auto_footer");
+        case AppearanceSectionTextScale: return L(@"text_size_footer");
         case AppearanceSectionIcon:
             if ([Theme iconHelperAvailable]) return L(@"appearance_icon_footer_helper");
             return [self iconsSupported] ? L(@"appearance_icon_footer") : L(@"appearance_icon_unsupported");
@@ -275,6 +344,7 @@ static NSCache *ImageCache(void) {
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == AppearanceSectionTextScale) return [self textSizeCell];
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.backgroundColor = [Theme surface];
     cell.textLabel.font = [UIFont systemFontOfSize:17];
@@ -342,13 +412,15 @@ static NSCache *ImageCache(void) {
             cell.accessoryType = isSelected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
         }
-        case AppearanceSectionTextScale: {
-            CGFloat sc = [AppSettings uiScale];
-            NSString *name = (sc <= 0.86) ? @"Nho" : (sc <= 0.96) ? @"Vua nho" : (sc <= 1.04) ? @"Mac dinh" : (sc <= 1.18) ? @"Lon" : @"Rat lon";
-            cell.textLabel.text = [NSString stringWithFormat:@"Co chu: %@ (%.2fx)", name, sc];
-            cell.detailTextLabel.text = @"Cham de thay doi — tu dong khop man hinh dien thoai";
+        case AppearanceSectionFont: {
+            BOOL system = (indexPath.row == 1);
+            cell.textLabel.text = L(system ? @"font_system" : @"font_claude");
+            cell.detailTextLabel.text = L(system ? @"font_system_note" : @"font_claude_note");
+            cell.detailTextLabel.numberOfLines = 2;
+            // Each row is shown in its own font, so the choice previews itself.
+            cell.textLabel.font = system ? [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold] : ([UIFont fontWithName:@"Georgia" size:19] ?: [UIFont systemFontOfSize:19]);
             cell.imageView.image = nil;
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.accessoryType = ([AppSettings fontStyle] == (system ? 1 : 0)) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
         }
         default: {
@@ -376,6 +448,8 @@ static NSCache *ImageCache(void) {
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == AppearanceSectionMode && indexPath.row == 0) return 16 + kModePreviewSize.height + 36 + 24 + 14;
     if (indexPath.section == AppearanceSectionIcon) return 62;
+    if (indexPath.section == AppearanceSectionTextScale) return 92;
+    if (indexPath.section == AppearanceSectionFont) return 68;
     if (indexPath.section == AppearanceSectionWallpaper && indexPath.row >= 1) return 64;
     return 56;
 }
@@ -398,22 +472,55 @@ static NSCache *ImageCache(void) {
         case AppearanceSectionIcon:
             [self changeIconToSkin:(ThemeSkin)indexPath.row];
             break;
-        case AppearanceSectionTextScale: {
-            NSArray *levels = @[@0.85, @0.92, @1.0, @1.08, @1.15];
-            CGFloat cur = [AppSettings uiScale];
-            NSUInteger idx = levels.count - 1;
-            for (NSUInteger i = 0; i < levels.count; i++) {
-                if (fabs([levels[i] doubleValue] - cur) < 0.01) { idx = i; break; }
-            }
-            CGFloat next = [levels[(idx + 1) % levels.count] doubleValue];
-            [AppSettings setUiScale:next];
+        case AppearanceSectionFont: {
+            NSInteger style = indexPath.row == 1 ? 1 : 0;
+            if ([AppSettings fontStyle] == style) break;
+            [AppSettings setFontStyle:style];
             [[NSNotificationCenter defaultCenter] postNotificationName:@"UIScaleDidChangeNotification" object:nil];
-            [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+            [Theme postChange];   // bars and titles pick the new font up
+            [self.tableView reloadData];
             break;
         }
         default:
             break;
     }
+}
+
+#pragma mark - Text size
+
+- (UITableViewCell *)textSizeCell {
+    TextSizeCell *cell = [[TextSizeCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    cell.backgroundColor = [Theme surface];
+    NSInteger index = ScaleLevelIndex([AppSettings uiScale]);
+    cell.nameLabel.text = L(@"text_size_title");
+    cell.nameLabel.textColor = [Theme text];
+    cell.valueLabel.text = [NSString stringWithFormat:@"%@ (%.2f\u00D7)", ScaleLevelName(index), kScaleLevels[index]];
+    cell.valueLabel.textColor = [Theme secondaryText];
+    cell.smallA.textColor = [Theme secondaryText];
+    cell.bigA.textColor = [Theme secondaryText];
+    cell.slider.tintColor = [Theme accent];
+    cell.slider.minimumTrackTintColor = [Theme accent];
+    cell.slider.value = (float)index;
+    [cell.slider addTarget:self action:@selector(textSizeSliding:) forControlEvents:UIControlEventValueChanged];
+    [cell.slider addTarget:self action:@selector(textSizeCommitted:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+    return cell;
+}
+
+- (void)textSizeSliding:(UISlider *)slider {
+    NSInteger index = (NSInteger)lround(slider.value);
+    UITableViewCell *cell = (UITableViewCell *)slider.superview.superview;
+    if ([cell isKindOfClass:[TextSizeCell class]]) {
+        ((TextSizeCell *)cell).valueLabel.text = [NSString stringWithFormat:@"%@ (%.2f\u00D7)", ScaleLevelName(index), kScaleLevels[index]];
+    }
+}
+
+// The size is applied when the finger lifts (and the slider snaps to the nearest step), so the chat is not re-laid out while sliding.
+- (void)textSizeCommitted:(UISlider *)slider {
+    NSInteger index = (NSInteger)lround(slider.value);
+    [slider setValue:(float)index animated:YES];
+    if (ScaleLevelIndex([AppSettings uiScale]) == index && fabs([AppSettings uiScale] - kScaleLevels[index]) < 0.001) return;
+    [AppSettings setUiScale:(CGFloat)kScaleLevels[index]];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"UIScaleDidChangeNotification" object:nil];
 }
 
 #pragma mark - Actions

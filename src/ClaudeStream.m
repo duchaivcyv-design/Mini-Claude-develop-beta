@@ -13,19 +13,18 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 @property (copy, nonatomic) NSString *system;
 @property (strong, nonatomic) NSURLSession *session;
 @property (strong, nonatomic) NSURLSessionDataTask *task;
-@property (strong, nonatomic) NSMutableData *buffer;       // unfinished SSE bytes (or the whole body in single-request mode)
-@property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
+@property (strong, nonatomic) NSMutableData *buffer;
+@property (strong, nonatomic) NSMutableData *errorBody;
 @property (assign, nonatomic) NSInteger status;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
-@property (copy, nonatomic) NSString *stopReason;          // end_turn, max_tokens, refusal, ...
-@property (copy, nonatomic) NSString *inStreamErrorType;   // an "error" event delivered inside a 200 stream
+@property (copy, nonatomic) NSString *stopReason;
+@property (copy, nonatomic) NSString *inStreamErrorType;
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
 @property (assign, nonatomic) long long inputTokenUsage;
 @property (assign, nonatomic) long long outputTokenUsage;
 
-// Biến bổ trợ cho cơ chế Bẻ cưỡng chế retry vô hạn trên cùng 1 Key & Model
 @property (assign, nonatomic) NSInteger sameKeyRetryCount;
 @property (strong, nonatomic) NSMutableURLRequest *savedRequest;
 @end
@@ -131,7 +130,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     }
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
+    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:kClaudeMessagesURL]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:timeout];
@@ -151,8 +150,14 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
 }
 
 - (void)executeForcedRequest:(NSMutableURLRequest *)request {
-    if (self.finished || self.cancelled) return;
-    
+    if (self.finished || self.cancelled || !request) return;
+
+    if (self.session) {
+        [self.session invalidateAndCancel];
+        self.session = nil;
+    }
+    self.task = nil;
+
     [self.buffer setLength:0];
     [self.errorBody setLength:0];
     self.status = 0;
@@ -163,7 +168,7 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     self.inputTokenUsage = 0;
     self.outputTokenUsage = 0;
 
-    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
+    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
     config.timeoutIntervalForResource = 3600;
@@ -176,6 +181,9 @@ static NSString *const kAnthropicVersion = @"2023-06-01";
     if (self.finished) return;
     self.cancelled = YES;
     [self.task cancel];
+    [self.session invalidateAndCancel];
+    self.session = nil;
+    self.task = nil;
 }
 
 #pragma mark - NSURLSessionDataDelegate
@@ -228,15 +236,21 @@ didReceiveResponse:(NSURLResponse *)response
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (self.finished) return;
 
+    if (self.useStreaming) {
+        [self drainBufferFinal:YES];
+    }
+
     BOOL isRateLimitOrOverload = (self.status == 429 || self.status == 529 ||
                                   [self.inStreamErrorType isEqualToString:@"overloaded_error"] ||
                                   [self.inStreamErrorType isEqualToString:@"rate_limit_error"]);
 
     if (!self.cancelled && error == nil && !isRateLimitOrOverload && self.status == 200 && (self.inStreamErrorType.length == 0)) {
         self.finished = YES;
+        if (!self.useStreaming) [self processWholeBody];
         [self.session finishTasksAndInvalidate];
-        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
-        
+        self.session = nil;
+        self.task = nil;
+
         if (!self.gotText) {
             GeminiStreamError result = [self.stopReason isEqualToString:@"refusal"] ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
             NSString *detail = self.stopReason;
@@ -250,7 +264,7 @@ didReceiveResponse:(NSURLResponse *)response
             if (finish) finish(result, self.status, detail);
             return;
         }
-        
+
         if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
             self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
         }
@@ -264,7 +278,9 @@ didReceiveResponse:(NSURLResponse *)response
 
     if (self.cancelled) {
         self.finished = YES;
-        [self.session finishTasksAndInvalidate];
+        [self.session invalidateAndCancel];
+        self.session = nil;
+        self.task = nil;
         void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
         self.onDelta = nil;
         self.onUsage = nil;
@@ -273,54 +289,56 @@ didReceiveResponse:(NSURLResponse *)response
         return;
     }
 
-    // === BẺ CƯỠNG CHẾ TỐI CAO: RETRY VÔ HẠN NGẦM TRÊN CÙNG 1 KEY & MODEL KHI DÍNH 429 / OVERLOAD ===
-    if (isRateLimitOrOverload || (error != nil && self.status == 0)) {
-        if (self.sameKeyRetryCount < 40) { // Thử tối đa 40 lần với backoff tăng dần
+    NSInteger maxRetries = self.useFastSpeed ? 6 : 10;
+    double maxBackoff = self.useFastSpeed ? 6.0 : 10.0;
+    if (!self.gotText && (isRateLimitOrOverload || (error != nil && self.status == 0 && error.code != NSURLErrorCancelled))) {
+        if (self.sameKeyRetryCount < maxRetries) {
             self.sameKeyRetryCount++;
-            NSTimeInterval backoffDelay = MIN(pow(2.0, self.sameKeyRetryCount), 30.0);
-            NSTimeInterval jitter = (double)(arc4random_uniform(1000)) / 500.0; // 0 -> 2s ngẫu nhiên
+            NSTimeInterval backoffDelay = MIN(pow(1.6, self.sameKeyRetryCount), maxBackoff);
+            NSTimeInterval jitter = (double)(arc4random_uniform(500)) / 1000.0;
             NSTimeInterval totalWait = backoffDelay + jitter;
-            
-            NSLog(@"[SupremeForce-ClaudeSameKey] Dính lỗi 429/Overload/Network trên cùng 1 Key. Lần retry thứ %ld. Đang chờ %.2fs rồi đấm lại server...", (long)self.sameKeyRetryCount, totalWait);
-            
-            [self.session finishTasksAndInvalidate];
-            
+
+            [self.session invalidateAndCancel];
+            self.session = nil;
+            self.task = nil;
+
             __weak typeof(self) weakSelf = self;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(totalWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [weakSelf executeForcedRequest:weakSelf.savedRequest];
+                ClaudeStream *me = weakSelf;
+                if (me && !me.finished && !me.cancelled) {
+                    [me executeForcedRequest:me.savedRequest];
+                }
             });
             return;
         }
     }
 
-    // Xử lý lỗi thông thường khi đã vượt quá giới hạn retry
     self.finished = YES;
-    [self.session finishTasksAndInvalidate];
+    [self.session invalidateAndCancel];
+    self.session = nil;
+    self.task = nil;
 
     GeminiStreamError result = GeminiStreamErrorNone;
     NSString *detail = nil;
 
-    if (error != nil) {
+    if (error != nil && !self.gotText) {
         result = GeminiStreamErrorNetwork;
         detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
-    } else if (self.status != 200) {
+    } else if (self.status != 200 && !self.gotText) {
         NSString *type = nil, *message = nil;
         [self readErrorBody:self.errorBody type:&type message:&message];
         detail = (type.length && message.length)
             ? [NSString stringWithFormat:@"%@ | %@", type, message]
             : (message.length ? message : type);
         result = [ClaudeStream errorForStatus:self.status type:type message:message];
-    } else {
-        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
-        if (self.inStreamErrorType.length > 0 || self.inStreamErrorMessage.length > 0) {
-            detail = self.inStreamErrorMessage;
-            result = [ClaudeStream errorForStatus:0 type:self.inStreamErrorType message:self.inStreamErrorMessage];
-        } else if (!self.gotText) {
-            result = [self.stopReason isEqualToString:@"refusal"] ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
-            detail = self.stopReason;
-        } else if ([self.stopReason isEqualToString:@"max_tokens"] && self.onDelta) {
-            self.onDelta([NSString stringWithFormat:@"\n\n%@", L(@"reply_truncated")]);
-        }
+    } else if ((self.inStreamErrorType.length > 0 || self.inStreamErrorMessage.length > 0) && !self.gotText) {
+        detail = self.inStreamErrorMessage;
+        result = [ClaudeStream errorForStatus:0 type:self.inStreamErrorType message:self.inStreamErrorMessage];
+    } else if (!self.gotText) {
+        result = [self.stopReason isEqualToString:@"refusal"] ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
+        detail = self.stopReason;
+    } else if ([self.stopReason isEqualToString:@"max_tokens"] && self.onDelta) {
+        self.onDelta([NSString stringWithFormat:@"\n\n%@", L(@"reply_truncated")]);
     }
 
     if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
@@ -451,7 +469,7 @@ didReceiveResponse:(NSURLResponse *)response
     if ([type isEqualToString:@"overloaded_error"] || [type isEqualToString:@"api_error"]) return GeminiStreamErrorServer;
 
     if (status == 413) return GeminiStreamErrorTooLarge;
-        if (status == 400) {
+    if (status == 400) {
         if (lower.length > 0 && ([lower rangeOfString:@"too long"].location != NSNotFound ||
                                  [lower rangeOfString:@"too large"].location != NSNotFound ||
                                  [lower rangeOfString:@"exceeds"].location != NSNotFound)) {

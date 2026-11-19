@@ -4,25 +4,25 @@
 #import "Provider.h"
 
 @interface GeminiStream () <NSURLSessionDataDelegate>
+@property (assign, nonatomic) BOOL useFastSpeed;
 @property (copy, nonatomic) NSString *key;
 @property (copy, nonatomic) NSString *model;
 @property (copy, nonatomic) NSArray *turns;
 @property (copy, nonatomic) NSString *system;
 @property (strong, nonatomic) NSURLSession *session;
 @property (strong, nonatomic) NSURLSessionDataTask *task;
-@property (strong, nonatomic) NSMutableData *buffer;       // unfinished SSE bytes
-@property (strong, nonatomic) NSMutableData *errorBody;    // body of a non-200 response
+@property (strong, nonatomic) NSMutableData *buffer;
+@property (strong, nonatomic) NSMutableData *errorBody;
 @property (assign, nonatomic) NSInteger status;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
-@property (copy, nonatomic) NSString *blockReason;         // promptFeedback.blockReason or a blocking finishReason
-@property (assign, nonatomic) NSInteger inStreamErrorStatus;   // error object delivered inside a 200 stream
+@property (copy, nonatomic) NSString *blockReason;
+@property (assign, nonatomic) NSInteger inStreamErrorStatus;
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
 @property (assign, nonatomic) long long inputTokenUsage;
 @property (assign, nonatomic) long long outputTokenUsage;
 
-// Biến bổ trợ cho cơ chế Bẻ cưỡng chế retry vô hạn trên cùng 1 Key & Model
 @property (assign, nonatomic) NSInteger sameKeyRetryCount;
 @property (strong, nonatomic) NSMutableURLRequest *savedRequest;
 @end
@@ -40,6 +40,7 @@
         _buffer = [NSMutableData data];
         _errorBody = [NSMutableData data];
         _useStreaming = YES;
+        _useFastSpeed = NO;
         _sameKeyRetryCount = 0;
     }
     return self;
@@ -91,14 +92,16 @@
         ? MIN(outputCeiling, MAX(1024, (outputCeiling * 2) / 3))
         : outputCeiling;
     NSInteger availableThinking = supportsThinking ? MAX(0, outputCeiling - answerReserve) : 0;
-    NSInteger thinkingBudget = 0;
+
     if ([lowerModel containsString:@"gemini-4"]) {
-        NSArray *levels = @[@"low", @"low", @"medium", @"high", @"high"];
+        NSArray *levels = self.useFastSpeed
+            ? @[@"minimal", @"low", @"low", @"medium", @"high"]
+            : @[@"low", @"low", @"medium", @"high", @"high"];
         generationConfig[@"thinkingConfig"] = @{ @"thinkingLevel": levels[(NSUInteger)reasoning] };
     } else if ([lowerModel containsString:@"gemini-3"]) {
         NSArray *levels = [lowerModel containsString:@"pro"]
-            ? @[@"low", @"low", @"medium", @"high", @"high"]
-            : @[@"minimal", @"low", @"medium", @"high", @"high"];
+            ? (self.useFastSpeed ? @[@"low", @"low", @"low", @"medium", @"high"] : @[@"low", @"low", @"medium", @"high", @"high"])
+            : (self.useFastSpeed ? @[@"minimal", @"minimal", @"low", @"medium", @"high"] : @[@"minimal", @"low", @"medium", @"high", @"high"]);
         generationConfig[@"thinkingConfig"] = @{ @"thinkingLevel": levels[(NSUInteger)reasoning] };
     } else if ([lowerModel containsString:@"gemini-2.5"]) {
         BOOL proModel = [lowerModel containsString:@"pro"];
@@ -106,7 +109,10 @@
             ? @[@128, @1024, @8192, @24576, @32768]
             : @[@0, @1024, @4096, @16384, @24576];
         NSInteger desiredBudget = [budgets[(NSUInteger)reasoning] integerValue];
-        thinkingBudget = MIN(desiredBudget, availableThinking);
+        if (self.useFastSpeed) {
+            desiredBudget = desiredBudget / 2;
+        }
+        NSInteger thinkingBudget = MIN(desiredBudget, availableThinking);
         if (proModel && thinkingBudget > 0 && thinkingBudget < 128) thinkingBudget = 0;
         if (!proModel || thinkingBudget >= 128) {
             generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
@@ -114,6 +120,9 @@
     }
 
     generationConfig[@"maxOutputTokens"] = @(MAX(1, outputCeiling));
+    if (self.useFastSpeed) {
+        generationConfig[@"temperature"] = @0.4;
+    }
 
     if ([lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"]) {
         generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
@@ -125,7 +134,7 @@
     if ([AppSettings webSearchEnabled] && !imageGenerationModel) payload[@"tools"] = @[@{ @"google_search": @{} }];
     NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
 
-    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
+    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:timeout];
@@ -143,8 +152,14 @@
 }
 
 - (void)executeForcedRequest:(NSMutableURLRequest *)request {
-    if (self.finished || self.cancelled) return;
-    
+    if (self.finished || self.cancelled || !request) return;
+
+    if (self.session) {
+        [self.session invalidateAndCancel];
+        self.session = nil;
+    }
+    self.task = nil;
+
     [self.buffer setLength:0];
     [self.errorBody setLength:0];
     self.status = 0;
@@ -155,7 +170,7 @@
     self.inputTokenUsage = 0;
     self.outputTokenUsage = 0;
 
-    NSTimeInterval timeout = self.useStreaming ? 180 : 240;
+    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
     config.timeoutIntervalForResource = 3600;
@@ -168,6 +183,9 @@
     if (self.finished) return;
     self.cancelled = YES;
     [self.task cancel];
+    [self.session invalidateAndCancel];
+    self.session = nil;
+    self.task = nil;
 }
 
 #pragma mark - NSURLSessionDataDelegate
@@ -211,14 +229,20 @@ didReceiveResponse:(NSURLResponse *)response
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (self.finished) return;
 
+    if (self.useStreaming) {
+        [self drainBufferFinal:YES];
+    }
+
     BOOL isRateLimitOrOverload = (self.status == 429 || self.status >= 500 ||
                                   self.inStreamErrorStatus == 429 || self.inStreamErrorStatus >= 500);
 
     if (!self.cancelled && error == nil && !isRateLimitOrOverload && self.status == 200 && (self.inStreamErrorStatus == 0)) {
         self.finished = YES;
+        if (!self.useStreaming) [self processWholeBody];
         [self.session finishTasksAndInvalidate];
-        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
-        
+        self.session = nil;
+        self.task = nil;
+
         if (!self.gotText) {
             GeminiStreamError result = self.blockReason.length > 0 ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
             NSString *detail = self.blockReason;
@@ -233,7 +257,7 @@ didReceiveResponse:(NSURLResponse *)response
             if (finish) finish(result, self.status, detail);
             return;
         }
-        
+
         if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
             self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
         }
@@ -248,7 +272,9 @@ didReceiveResponse:(NSURLResponse *)response
 
     if (self.cancelled) {
         self.finished = YES;
-        [self.session finishTasksAndInvalidate];
+        [self.session invalidateAndCancel];
+        self.session = nil;
+        self.task = nil;
         void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
         self.onDelta = nil;
         self.onImage = nil;
@@ -258,51 +284,54 @@ didReceiveResponse:(NSURLResponse *)response
         return;
     }
 
-    // === BẺ CƯỠNG CHẾ TỐI CAO: RETRY VÔ HẠN NGẦM TRÊN CÙNG 1 KEY & MODEL KHI DÍNH 429 / 5xx / ERROR ===
-    if (isRateLimitOrOverload || (error != nil && self.status == 0)) {
-        if (self.sameKeyRetryCount < 40) { // Thử lại tối đa 40 lần ngầm với backoff tăng dần
+    // Chỉ retry tự động khi chưa nhận được chữ (`!self.gotText`) để tránh lặp lại đoạn đã stream
+    NSInteger maxRetries = self.useFastSpeed ? 8 : 12;
+    double maxBackoff = self.useFastSpeed ? 6.0 : 12.0;
+    if (!self.gotText && (isRateLimitOrOverload || (error != nil && self.status == 0 && error.code != NSURLErrorCancelled))) {
+        if (self.sameKeyRetryCount < maxRetries) {
             self.sameKeyRetryCount++;
-            NSTimeInterval backoffDelay = MIN(pow(2.0, self.sameKeyRetryCount), 30.0);
-            NSTimeInterval jitter = (double)(arc4random_uniform(1000)) / 500.0; // 0 -> 2s ngẫu nhiên
+            NSTimeInterval backoffDelay = MIN(pow(1.6, self.sameKeyRetryCount), maxBackoff);
+            NSTimeInterval jitter = (double)(arc4random_uniform(500)) / 1000.0;
             NSTimeInterval totalWait = backoffDelay + jitter;
-            
-            NSLog(@"[SupremeForce-GeminiSameKey] Dính lỗi 429/Server/Network trên cùng 1 Key. Lần retry thứ %ld. Đang chờ %.2fs rồi đấm lại server...", (long)self.sameKeyRetryCount, totalWait);
-            
-            [self.session finishTasksAndInvalidate];
-            
+
+            [self.session invalidateAndCancel];
+            self.session = nil;
+            self.task = nil;
+
             __weak typeof(self) weakSelf = self;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(totalWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [weakSelf executeForcedRequest:weakSelf.savedRequest];
+                GeminiStream *me = weakSelf;
+                if (me && !me.finished && !me.cancelled) {
+                    [me executeForcedRequest:me.savedRequest];
+                }
             });
             return;
         }
     }
 
-    // Xử lý lỗi thông thường khi đã vượt quá giới hạn retry
     self.finished = YES;
-    [self.session finishTasksAndInvalidate];
+    [self.session invalidateAndCancel];
+    self.session = nil;
+    self.task = nil;
 
     GeminiStreamError result = GeminiStreamErrorNone;
     NSString *detail = nil;
 
-    if (error != nil) {
+    if (error != nil && !self.gotText) {
         result = GeminiStreamErrorNetwork;
         detail = [NSString stringWithFormat:@"%@ [%@ %ld]", error.localizedDescription, error.domain, (long)error.code];
-    } else if (self.status != 200) {
+    } else if (self.status != 200 && !self.gotText) {
         NSString *message = [self messageFromErrorBody:self.errorBody];
         detail = message;
         NSTimeInterval bodyRetryDelay = [self retryDelayFromErrorBody:self.errorBody];
         if (bodyRetryDelay > self.retryAfterSeconds) self.retryAfterSeconds = bodyRetryDelay;
         result = [GeminiStream errorForStatus:self.status message:message];
-    } else {
-        if (self.useStreaming) [self drainBufferFinal:YES]; else [self processWholeBody];
-        if (self.inStreamErrorStatus != 0) {
-            detail = self.inStreamErrorMessage;
-            result = [GeminiStream errorForStatus:self.inStreamErrorStatus message:self.inStreamErrorMessage];
-        } else if (!self.gotText) {
-            result = self.blockReason.length > 0 ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
-            detail = self.blockReason;
-        }
+    } else if (self.inStreamErrorStatus != 0 && !self.gotText) {
+        detail = self.inStreamErrorMessage;
+        result = [GeminiStream errorForStatus:self.inStreamErrorStatus message:self.inStreamErrorMessage];
+    } else if (!self.gotText) {
+        result = self.blockReason.length > 0 ? GeminiStreamErrorBlocked : GeminiStreamErrorEmptyReply;
+        detail = self.blockReason;
     }
 
     if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {

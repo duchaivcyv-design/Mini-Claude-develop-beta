@@ -210,3 +210,21 @@
 "new_chat_title" = "Start a new chat?";
 "new_chat_msg" = "The current chat stays saved in History.";
 "new_chat_confirm" = "New chat";
+
+/* Font, size, credits (0.7.2+) */
+"text_size_header" = "Text size";
+"text_size_title" = "Text size";
+"text_size_footer" = "Applies to the chat and the input box. Fits the phone screen automatically.";
+"size_small" = "Small";
+"size_med_small" = "Slightly small";
+"size_default" = "Default";
+"size_large" = "Large";
+"size_xlarge" = "Extra large";
+"font_header" = "Font";
+"font_claude" = "Claude font";
+"font_claude_note" = "Serif type for titles and answers, in Claude's style";
+"font_system" = "System font";
+"font_system_note" = "San Francisco, the iOS sans-serif";
+"main_developer" = "Main developer";
+"search_chip_title" = "Search";
+"fast_boost_title" = "Boost ×10";

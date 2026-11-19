@@ -1,5 +1,6 @@
 #import "Theme.h"
 #import "Strings.h"
+#import "AppSettings.h"
 #import <ImageIO/ImageIO.h>
 #import <math.h>
 #import <spawn.h>
@@ -140,6 +141,7 @@ static NSString *WallpaperFileKey(NSInteger index) {
 + (UIColor *)selection      { return HexColor(CurrentPalette().selection); }
 
 + (UIFont *)serifFontOfSize:(CGFloat)size {
+    if ([AppSettings fontStyle] == 1) return [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];   // "System font" choice
     UIFont *font = [UIFont fontWithName:@"Georgia" size:size];
     return font ? font : [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];
 }
@@ -307,6 +309,170 @@ static NSString *WallpaperFileKey(NSInteger index) {
         CGContextAddLineToPoint(c, 10, 4);
         CGContextAddLineToPoint(c, 15.5, 9.5);
         CGContextStrokePath(c);
+    }];
+}
+
+// Microphone: a filled capsule, a cradle arc under it and a stem with a base.
++ (UIImage *)iconMicOfSize:(CGFloat)side {
+    CGFloat k = side / 20.0;
+    return [self iconWithSize:CGSizeMake(side, side) draw:^(CGContextRef c) {
+        CGContextScaleCTM(c, k, k);
+        CGContextSetFillColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 1.8);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        UIBezierPath *capsule = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(7, 1.8, 6, 10.4) cornerRadius:3];
+        CGContextAddPath(c, capsule.CGPath);
+        CGContextFillPath(c);
+        UIBezierPath *cradle = [UIBezierPath bezierPathWithArcCenter:CGPointMake(10, 9.2) radius:5.8 startAngle:0 endAngle:(CGFloat)M_PI clockwise:YES];
+        CGContextAddPath(c, cradle.CGPath);
+        CGContextStrokePath(c);
+        CGContextMoveToPoint(c, 10, 15);
+        CGContextAddLineToPoint(c, 10, 18);
+        CGContextMoveToPoint(c, 6.8, 18);
+        CGContextAddLineToPoint(c, 13.2, 18);
+        CGContextStrokePath(c);
+    }];
+}
+
++ (UIImage *)iconMic {
+    return [self iconMicOfSize:20];
+}
+
++ (UIImage *)iconSearch {
+    return [self iconWithSize:CGSizeMake(16, 16) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 1.7);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        CGContextStrokeEllipseInRect(c, CGRectMake(2, 2, 8.6, 8.6));
+        CGContextMoveToPoint(c, 9.2, 9.2);
+        CGContextAddLineToPoint(c, 13.6, 13.6);
+        CGContextStrokePath(c);
+    }];
+}
+
++ (UIImage *)iconBolt {
+    return [self iconWithSize:CGSizeMake(16, 16) draw:^(CGContextRef c) {
+        CGContextSetFillColorWithColor(c, [UIColor blackColor].CGColor);
+        UIBezierPath *b = [UIBezierPath bezierPath];
+        [b moveToPoint:CGPointMake(9.4, 1)];
+        [b addLineToPoint:CGPointMake(3.2, 9)];
+        [b addLineToPoint:CGPointMake(7.2, 9)];
+        [b addLineToPoint:CGPointMake(6.4, 15)];
+        [b addLineToPoint:CGPointMake(12.8, 6.6)];
+        [b addLineToPoint:CGPointMake(8.6, 6.6)];
+        [b closePath];
+        b.lineJoinStyle = kCGLineJoinRound;
+        CGContextAddPath(c, b.CGPath);
+        CGContextFillPath(c);
+    }];
+}
+
++ (UIImage *)iconClose {
+    return [self iconWithSize:CGSizeMake(20, 20) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 2.2);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        CGContextMoveToPoint(c, 4.5, 4.5);
+        CGContextAddLineToPoint(c, 15.5, 15.5);
+        CGContextMoveToPoint(c, 15.5, 4.5);
+        CGContextAddLineToPoint(c, 4.5, 15.5);
+        CGContextStrokePath(c);
+    }];
+}
+
+// Icons of the "+" tool menu. Template images: the caller tints them with the theme colour, so they follow light / dark.
++ (UIImage *)iconTool:(NSString *)name {
+    return [self iconWithSize:CGSizeMake(24, 24) draw:^(CGContextRef c) {
+        CGContextSetStrokeColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetFillColorWithColor(c, [UIColor blackColor].CGColor);
+        CGContextSetLineWidth(c, 1.8);
+        CGContextSetLineCap(c, kCGLineCapRound);
+        CGContextSetLineJoin(c, kCGLineJoinRound);
+        if ([name isEqualToString:@"photo"]) {
+            [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(3.5, 4.5, 17, 15) cornerRadius:3.5] stroke];
+            CGContextFillEllipseInRect(c, CGRectMake(7.4, 8.2, 3.2, 3.2));
+            UIBezierPath *hill = [UIBezierPath bezierPath];
+            [hill moveToPoint:CGPointMake(4.5, 17.5)];
+            [hill addLineToPoint:CGPointMake(10, 12.8)];
+            [hill addLineToPoint:CGPointMake(14, 16.2)];
+            [hill addLineToPoint:CGPointMake(16.5, 14)];
+            [hill addLineToPoint:CGPointMake(19.5, 17.5)];
+            hill.lineWidth = 1.8; [hill stroke];
+        } else if ([name isEqualToString:@"file"]) {
+            UIBezierPath *page = [UIBezierPath bezierPath];
+            [page moveToPoint:CGPointMake(6, 3.5)];
+            [page addLineToPoint:CGPointMake(13.5, 3.5)];
+            [page addLineToPoint:CGPointMake(18.5, 8.5)];
+            [page addLineToPoint:CGPointMake(18.5, 20.5)];
+            [page addLineToPoint:CGPointMake(6, 20.5)];
+            [page closePath];
+            page.lineWidth = 1.8; [page stroke];
+            UIBezierPath *fold = [UIBezierPath bezierPath];
+            [fold moveToPoint:CGPointMake(13.5, 3.5)];
+            [fold addLineToPoint:CGPointMake(13.5, 8.5)];
+            [fold addLineToPoint:CGPointMake(18.5, 8.5)];
+            fold.lineWidth = 1.8; [fold stroke];
+            CGContextMoveToPoint(c, 9, 13); CGContextAddLineToPoint(c, 15.5, 13);
+            CGContextMoveToPoint(c, 9, 16.5); CGContextAddLineToPoint(c, 14, 16.5);
+            CGContextStrokePath(c);
+        } else if ([name isEqualToString:@"library"]) {
+            UIBezierPath *folder = [UIBezierPath bezierPath];
+            [folder moveToPoint:CGPointMake(3.5, 7)];
+            [folder addQuadCurveToPoint:CGPointMake(5.5, 5)  controlPoint:CGPointMake(3.5, 5)];
+            [folder addLineToPoint:CGPointMake(9.5, 5)];
+            [folder addLineToPoint:CGPointMake(11.5, 7.5)];
+            [folder addLineToPoint:CGPointMake(18.5, 7.5)];
+            [folder addQuadCurveToPoint:CGPointMake(20.5, 9.5) controlPoint:CGPointMake(20.5, 7.5)];
+            [folder addLineToPoint:CGPointMake(20.5, 17.5)];
+            [folder addQuadCurveToPoint:CGPointMake(18.5, 19.5) controlPoint:CGPointMake(20.5, 19.5)];
+            [folder addLineToPoint:CGPointMake(5.5, 19.5)];
+            [folder addQuadCurveToPoint:CGPointMake(3.5, 17.5) controlPoint:CGPointMake(3.5, 19.5)];
+            [folder closePath];
+            folder.lineWidth = 1.8; [folder stroke];
+        } else if ([name isEqualToString:@"camera"]) {
+            UIBezierPath *body = [UIBezierPath bezierPath];
+            [body moveToPoint:CGPointMake(3.5, 9)];
+            [body addQuadCurveToPoint:CGPointMake(5.5, 7) controlPoint:CGPointMake(3.5, 7)];
+            [body addLineToPoint:CGPointMake(8, 7)];
+            [body addLineToPoint:CGPointMake(9.5, 4.8)];
+            [body addLineToPoint:CGPointMake(14.5, 4.8)];
+            [body addLineToPoint:CGPointMake(16, 7)];
+            [body addLineToPoint:CGPointMake(18.5, 7)];
+            [body addQuadCurveToPoint:CGPointMake(20.5, 9) controlPoint:CGPointMake(20.5, 7)];
+            [body addLineToPoint:CGPointMake(20.5, 17.5)];
+            [body addQuadCurveToPoint:CGPointMake(18.5, 19.5) controlPoint:CGPointMake(20.5, 19.5)];
+            [body addLineToPoint:CGPointMake(5.5, 19.5)];
+            [body addQuadCurveToPoint:CGPointMake(3.5, 17.5) controlPoint:CGPointMake(3.5, 19.5)];
+            [body closePath];
+            body.lineWidth = 1.8; [body stroke];
+            CGContextStrokeEllipseInRect(c, CGRectMake(8.5, 9.5, 7, 7));
+        } else if ([name isEqualToString:@"web"]) {
+            CGContextStrokeEllipseInRect(c, CGRectMake(3.5, 3.5, 17, 17));
+            CGContextStrokeEllipseInRect(c, CGRectMake(8, 3.5, 8, 17));
+            CGContextMoveToPoint(c, 3.5, 12); CGContextAddLineToPoint(c, 20.5, 12);
+            CGContextStrokePath(c);
+        } else if ([name isEqualToString:@"think"]) {   // light bulb
+            UIBezierPath *bulb = [UIBezierPath bezierPathWithArcCenter:CGPointMake(12, 9.5) radius:5.8 startAngle:(CGFloat)(M_PI * 0.78) endAngle:(CGFloat)(M_PI * 0.22) clockwise:YES];
+            [bulb addLineToPoint:CGPointMake(14.6, 16)];
+            [bulb addLineToPoint:CGPointMake(9.4, 16)];
+            [bulb closePath];
+            bulb.lineWidth = 1.8; [bulb stroke];
+            CGContextMoveToPoint(c, 9.6, 19); CGContextAddLineToPoint(c, 14.4, 19);
+            CGContextMoveToPoint(c, 10.6, 21.4); CGContextAddLineToPoint(c, 13.4, 21.4);
+            CGContextStrokePath(c);
+        } else if ([name isEqualToString:@"sparkle"]) {
+            UIBezierPath *star = [UIBezierPath bezierPath];
+            [star moveToPoint:CGPointMake(12, 3)];
+            [star addQuadCurveToPoint:CGPointMake(21, 12) controlPoint:CGPointMake(13, 11)];
+            [star addQuadCurveToPoint:CGPointMake(12, 21) controlPoint:CGPointMake(13, 13)];
+            [star addQuadCurveToPoint:CGPointMake(3, 12) controlPoint:CGPointMake(11, 13)];
+            [star addQuadCurveToPoint:CGPointMake(12, 3) controlPoint:CGPointMake(11, 11)];
+            [star closePath];
+            star.lineWidth = 1.8; [star stroke];
+        } else {   // "more": three dots
+            for (int i = 0; i < 3; i++) CGContextFillEllipseInRect(c, CGRectMake(4.2 + i * 6.6, 10.2, 3.6, 3.6));
+        }
     }];
 }
 
