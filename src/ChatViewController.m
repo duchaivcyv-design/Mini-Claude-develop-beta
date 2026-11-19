@@ -1,6 +1,7 @@
 #import "ChatViewController.h"
 #import <WebKit/WebKit.h>
 #import <PhotosUI/PhotosUI.h>
+#import <AVFoundation/AVFoundation.h>
 #import "Strings.h"
 #import "Theme.h"
 #import "KeyStore.h"
@@ -115,6 +116,47 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
+static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
+    if (@available(iOS 13.0, *)) {
+        UIImage *sys = [UIImage systemImageNamed:@"gearshape"];
+        if (sys) return [sys imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    }
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0);
+    CGPoint c = CGPointMake(size * 0.5, size * 0.5);
+    CGFloat rOuter = size * 0.34;
+    CGFloat rInner = size * 0.24;
+    NSInteger teeth = 8;
+    UIBezierPath *gear = [UIBezierPath bezierPath];
+    for (NSInteger i = 0; i < teeth; i++) {
+        CGFloat a0 = (i * 2.0 * M_PI) / teeth;
+        CGFloat a1 = a0 + (M_PI / (teeth * 2.2));
+        CGFloat a2 = a0 + (M_PI / teeth);
+        CGFloat a3 = a2 + (M_PI / (teeth * 2.2));
+        CGPoint p0 = CGPointMake(c.x + cos(a0) * rInner, c.y + sin(a0) * rInner);
+        CGPoint p1 = CGPointMake(c.x + cos(a1) * rOuter, c.y + sin(a1) * rOuter);
+        CGPoint p2 = CGPointMake(c.x + cos(a2) * rOuter, c.y + sin(a2) * rOuter);
+        CGPoint p3 = CGPointMake(c.x + cos(a3) * rInner, c.y + sin(a3) * rInner);
+        if (i == 0) [gear moveToPoint:p0];
+        else [gear addLineToPoint:p0];
+        [gear addLineToPoint:p1];
+        [gear addLineToPoint:p2];
+        [gear addLineToPoint:p3];
+    }
+    [gear closePath];
+    gear.lineWidth = 1.6;
+    [color setStroke];
+    [gear stroke];
+
+    UIBezierPath *hole = [UIBezierPath bezierPathWithArcCenter:c radius:size * 0.12 startAngle:0 endAngle:M_PI * 2.0 clockwise:YES];
+    hole.lineWidth = 1.6;
+    [color setStroke];
+    [hole stroke];
+
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+}
+
 #pragma mark - Forward Declarations & Interfaces
 
 @class ChatViewController;
@@ -126,6 +168,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
 @property (assign, nonatomic) NSInteger activeVoiceStyleIndex;
 - (void)textViewDidChange:(UITextView *)textView;
 - (void)sendTapped;
+- (void)speakLastAssistantMessage;
 @end
 
 #pragma mark - VoiceChatFullScreenViewController
@@ -202,6 +245,15 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
     });
 }
 
+- (void)configureAudioSessionForPlayback:(BOOL)forPlayback {
+    NSError *error = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    AVAudioSessionCategoryOptions opts = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth;
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:opts error:&error];
+    [session setMode:(forPlayback ? AVAudioSessionModeDefault : AVAudioSessionModeMeasurement) error:&error];
+    [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&error];
+}
+
 - (void)setupMovingBlueLights {
     CGFloat screenW = CGRectGetWidth(self.view.bounds);
     CGFloat screenH = CGRectGetHeight(self.view.bounds);
@@ -240,6 +292,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
 
 - (void)onAssistantStartedSpeaking:(NSString *)text {
     dispatch_async(dispatch_get_main_queue(), ^{
+        [self configureAudioSessionForPlayback:YES];
         self->_isListening = NO;
         [self resetMicButtonState];
         self->_statusLabel.text = @"AI đang trả lời bằng giọng nói...";
@@ -248,7 +301,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
 
 - (void)onAssistantFinishedSpeaking {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self.view.window) return;
+        if (!self.view.window || !self.chatController.activeFullScreenVoice) return;
         [self startVoiceSession];
     });
 }
@@ -258,6 +311,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
         self.chatController.voiceManager = [VoiceChatManager shared];
     }
     [self.chatController.voiceManager stopSpeaking];
+    [self configureAudioSessionForPlayback:NO];
 
     _statusLabel.text = @"Đang lắng nghe...";
     _isListening = YES;
@@ -280,11 +334,12 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
             });
         } final:^(NSString *text) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (text.length > 0) {
+                NSString *clean = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (clean.length > 0) {
                     self->_isListening = NO;
                     [weakSelf resetMicButtonState];
-                    self->_statusLabel.text = [NSString stringWithFormat:@"Đã gửi: %@", text];
-                    [weakSelf sendVoiceTextToAI:text];
+                    self->_statusLabel.text = [NSString stringWithFormat:@"Đã gửi: %@", clean];
+                    [weakSelf sendVoiceTextToAI:clean];
                 } else {
                     self->_statusLabel.text = @"Không nghe rõ, thử lại nhé.";
                     [weakSelf resetMicButtonState];
@@ -317,6 +372,9 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
 
 - (void)sendVoiceTextToAI:(NSString *)text {
     [self.chatController.voiceManager stopRecording];
+    [self configureAudioSessionForPlayback:YES];
+    self.chatController.activeFullScreenVoice = YES;
+    self.chatController.activeVoiceStyleIndex = self.selectedVoiceIndex;
     _statusLabel.text = @"AI đang suy nghĩ...";
     self.chatController.textView.text = text;
     [self.chatController textViewDidChange:self.chatController.textView];
@@ -342,6 +400,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
 @property (strong, nonatomic) UISearchBar *historySearchBar;
 @property (strong, nonatomic) UITableView *historyTableView;
 @property (strong, nonatomic) UIButton *historyCloseXButton;
+@property (strong, nonatomic) UIButton *historySettingsButton;
 @property (strong, nonatomic) UIButton *chatRightOverlayButton;
 @property (strong, nonatomic) NSArray<NSDictionary *> *historyAllItems;
 @property (strong, nonatomic) NSArray<NSDictionary *> *historyFilteredItems;
@@ -539,20 +598,43 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
     [self.historyDrawerView addSubview:self.historyTableView];
 
     self.historyCloseXButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    [self.historyCloseXButton setImage:DrawCrossIconImage(24, [Theme text]) forState:UIControlStateNormal];
+    [self.historyCloseXButton setImage:DrawCrossIconImage(22, [Theme text]) forState:UIControlStateNormal];
     self.historyCloseXButton.tintColor = [Theme text];
     self.historyCloseXButton.backgroundColor = [Theme background];
-    self.historyCloseXButton.layer.cornerRadius = 18;
+    self.historyCloseXButton.layer.cornerRadius = 17;
     self.historyCloseXButton.layer.borderWidth = 1.0;
     self.historyCloseXButton.layer.borderColor = [Theme border].CGColor;
     [self.historyCloseXButton addTarget:self action:@selector(closeHistoryDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.historyDrawerView addSubview:self.historyCloseXButton];
+
+    self.historySettingsButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [self.historySettingsButton setImage:DrawSettingsGearIconImage(22, [Theme text]) forState:UIControlStateNormal];
+    self.historySettingsButton.tintColor = [Theme text];
+    self.historySettingsButton.backgroundColor = [Theme background];
+    self.historySettingsButton.layer.cornerRadius = 18;
+    self.historySettingsButton.layer.borderWidth = 1.0;
+    self.historySettingsButton.layer.borderColor = [Theme border].CGColor;
+    [self.historySettingsButton addTarget:self action:@selector(historySettingsTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.historyDrawerView addSubview:self.historySettingsButton];
 
     self.chatRightOverlayButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.chatRightOverlayButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.12];
     self.chatRightOverlayButton.hidden = YES;
     [self.chatRightOverlayButton addTarget:self action:@selector(closeHistoryDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.chatStageView addSubview:self.chatRightOverlayButton];
+}
+
+- (void)historySettingsTapped {
+    [self closeHistoryDrawer];
+    Class settingsVCClass = NSClassFromString(@"SettingsViewController");
+    if (settingsVCClass) {
+        UIViewController *settingsVC = [[settingsVCClass alloc] init];
+        if (self.navigationController) {
+            [self.navigationController pushViewController:settingsVC animated:YES];
+        } else {
+            [self presentViewController:settingsVC animated:YES completion:nil];
+        }
+    }
 }
 
 - (void)reloadHistoryItems {
@@ -672,12 +754,15 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
         topPad = MAX(topPad, self.view.safeAreaInsets.top + 8);
         bottomPad = MAX(bottomPad, self.view.safeAreaInsets.bottom + 10);
     }
-    self.historyNewChatButton.frame = CGRectMake(12, topPad, dw - 24, 34);
-    self.historySearchBar.frame = CGRectMake(6, topPad + 36, dw - 12, 42);
-    CGFloat closeBtnSize = 36;
-    CGFloat listBottom = dh - bottomPad - closeBtnSize - 10;
-    self.historyTableView.frame = CGRectMake(0, topPad + 82, dw, MAX(60, listBottom - (topPad + 82)));
-    self.historyCloseXButton.frame = CGRectMake(dw - closeBtnSize - 12, dh - bottomPad - closeBtnSize, closeBtnSize, closeBtnSize);
+    CGFloat closeBtnSize = 34;
+    self.historyCloseXButton.frame = CGRectMake(dw - closeBtnSize - 10, topPad, closeBtnSize, closeBtnSize);
+    self.historyNewChatButton.frame = CGRectMake(12, topPad, MAX(40, dw - closeBtnSize - 26), 34);
+    self.historySearchBar.frame = CGRectMake(6, topPad + 38, dw - 12, 42);
+
+    CGFloat settingsBtnSize = 36;
+    CGFloat listBottom = dh - bottomPad - settingsBtnSize - 10;
+    self.historyTableView.frame = CGRectMake(0, topPad + 84, dw, MAX(60, listBottom - (topPad + 84)));
+    self.historySettingsButton.frame = CGRectMake(dw - settingsBtnSize - 12, dh - bottomPad - settingsBtnSize, settingsBtnSize, settingsBtnSize);
 }
 
 #pragma mark - Setup
@@ -1254,6 +1339,9 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
         self.historyCloseXButton.tintColor = [Theme text];
         self.historyCloseXButton.backgroundColor = [Theme background];
         self.historyCloseXButton.layer.borderColor = [Theme border].CGColor;
+        self.historySettingsButton.tintColor = [Theme text];
+        self.historySettingsButton.backgroundColor = [Theme background];
+        self.historySettingsButton.layer.borderColor = [Theme border].CGColor;
         [self.historyTableView reloadData];
     }
 
@@ -1737,7 +1825,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
     self.attachButton.enabled = !self.streaming;
     self.attachButton.alpha = self.streaming ? 0.4 : 1.0;
     if (self.lastWasStreaming && !self.streaming) {
-        if ([AppSettings voiceAutoPlayEnabled] || self.activeFullScreenVoice) {
+        if (self.activeFullScreenVoice || [AppSettings voiceAutoPlayEnabled]) {
             [self speakLastAssistantMessage];
         }
     }
@@ -1885,10 +1973,19 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
                 if (!self.voiceManager) self.voiceManager = [VoiceChatManager shared];
                 [self.voiceManager stopRecording];
 
+                NSError *err = nil;
+                AVAudioSession *session = [AVAudioSession sharedInstance];
+                [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                          withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth
+                                error:&err];
+                [session setMode:AVAudioSessionModeDefault error:&err];
+                [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&err];
+
                 VoiceChatFullScreenViewController *voiceVC = [self.presentedViewController isKindOfClass:[VoiceChatFullScreenViewController class]]
                     ? (VoiceChatFullScreenViewController *)self.presentedViewController : nil;
                 [voiceVC onAssistantStartedSpeaking:text];
 
+                NSString *spoken = text.length > 2500 ? [text substringToIndex:2500] : text;
                 SEL speakWithStyleSel = NSSelectorFromString(@"speak:voiceIndex:completion:");
                 SEL speakWithCompletionSel = NSSelectorFromString(@"speak:completion:");
                 if ([self.voiceManager respondsToSelector:speakWithStyleSel]) {
@@ -1900,7 +1997,7 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
                     void (^done)(void) = ^{
                         [voiceVC onAssistantFinishedSpeaking];
                     };
-                    [inv setArgument:&text atIndex:2];
+                    [inv setArgument:&spoken atIndex:2];
                     [inv setArgument:&style atIndex:3];
                     [inv setArgument:&done atIndex:4];
                     [inv invoke];
@@ -1912,13 +2009,13 @@ static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
                     void (^done)(void) = ^{
                         [voiceVC onAssistantFinishedSpeaking];
                     };
-                    [inv setArgument:&text atIndex:2];
+                    [inv setArgument:&spoken atIndex:2];
                     [inv setArgument:&done atIndex:3];
                     [inv invoke];
                 } else {
-                    [self.voiceManager speak:text];
+                    [self.voiceManager speak:spoken];
                     if (voiceVC) {
-                        NSTimeInterval approxDuration = MAX(1.8, MIN(25.0, (double)text.length * 0.065));
+                        NSTimeInterval approxDuration = MAX(2.0, MIN(30.0, (double)spoken.length * 0.065));
                         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(approxDuration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                             [voiceVC onAssistantFinishedSpeaking];
                         });
