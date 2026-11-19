@@ -202,7 +202,7 @@ static NSString *SizeText(long long bytes) {
             primaryHandler = ^{ [weakSelf cancelTapped]; };
             break;
         }
-        case UpdateStateDownloaded:
+        case UpdateStateDownloaded: {
             title = L(@"update_downloaded");
             if (m.installKind == UpdateInstallKindIPA) {
                 message = L(@"update_ipa_msg");
@@ -216,17 +216,20 @@ static NSString *SizeText(long long bytes) {
             primaryHandler = ^{ [weakSelf installTapped]; };
             if (m.installKind == UpdateInstallKindIPA) secondaryHandler = ^{ [weakSelf openInTapped]; };
             break;
-        case UpdateStateFailed:
+        }
+        case UpdateStateFailed: {
             title = L(@"update_failed");
             message = m.errorMessage.length > 0 ? m.errorMessage : L(@"update_err_network");
             primary = L(@"update_retry");
             primaryHandler = ^{ [weakSelf retryTapped]; };
             secondary = L(@"update_close");
             break;
-        default:
+        }
+        default: {
             title = L(@"update_checking");
             primary = L(@"update_close");
             break;
+        }
     }
     self.titleLabel.text = title;
     self.messageLabel.text = message;
