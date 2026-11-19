@@ -166,12 +166,13 @@ static NSString *SizeText(long long bytes) {
     NSString *kind = m.installKindName;
 
     switch (m.state) {
-        case UpdateStateChecking:
+        case UpdateStateChecking: {
             title = L(@"update_checking");
             message = L(@"update_checking_msg");
             primary = L(@"update_close");
             break;
-        case UpdateStateUpToDate:
+        }
+        case UpdateStateUpToDate: {
             title = L(@"update_uptodate");
             message = [NSString stringWithFormat:L(@"update_uptodate_msg"), m.currentVersion];
             primary = L(@"update_close");
