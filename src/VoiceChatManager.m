@@ -88,6 +88,10 @@
                    error:&sessionError];
     [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&sessionError];
 
+    if (!self.engine) {
+        self.engine = [[AVAudioEngine alloc] init];
+    }
+
     self.request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
     self.request.shouldReportPartialResults = YES;
     if (@available(iOS 13, *)) {
@@ -117,7 +121,9 @@
 
     AVAudioInputNode *node = self.engine.inputNode;
     AVAudioFormat *format = [node outputFormatForBus:0];
-    [node removeTapOnBus:0];
+    @try {
+        [node removeTapOnBus:0];
+    } @catch (__unused NSException *ex) {}
     [node installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         [weakSelf.request appendAudioPCMBuffer:buffer];
     }];
@@ -125,7 +131,9 @@
     [self.engine prepare];
     NSError *startError = nil;
     if (![self.engine startAndReturnError:&startError]) {
-        [node removeTapOnBus:0];
+        @try {
+            [node removeTapOnBus:0];
+        } @catch (__unused NSException *ex) {}
         self.recording = NO;
         if (error) error(startError.localizedDescription ?: @"Không khởi động được ghi âm.");
         return;
@@ -134,6 +142,7 @@
 }
 
 - (void)stopRecording {
+    self.recording = NO;
     if (self.engine.isRunning) {
         [self.engine stop];
     }
@@ -144,7 +153,6 @@
     [self.task cancel];
     self.task = nil;
     self.request = nil;
-    self.recording = NO;
 }
 
 #pragma mark - Đọc văn bản AI bằng giọng nói (TTS)
@@ -152,9 +160,12 @@
 - (void)activatePlaybackSession {
     NSError *err = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
+    AVAudioSessionCategoryOptions opts = AVAudioSessionCategoryOptionDuckOthers |
+                                     AVAudioSessionCategoryOptionMixWithOthers |
+                                     AVAudioSessionCategoryOptionAllowBluetooth;
     [session setCategory:AVAudioSessionCategoryPlayback
                     mode:AVAudioSessionModeSpokenAudio
-                 options:AVAudioSessionCategoryOptionDuckOthers | AVAudioSessionCategoryOptionAllowBluetooth
+                 options:opts
                    error:&err];
     [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&err];
 }
@@ -162,7 +173,6 @@
 - (NSString *)cleanTextForSpeech:(NSString *)raw {
     if (raw.length == 0) return @"";
     NSString *cleaned = raw;
-    // Loại bỏ code block dài để đọc tự nhiên hơn
     NSError *regexError = nil;
     NSRegularExpression *codeBlockRegex = [NSRegularExpression regularExpressionWithPattern:@"```[\\s\\S]*?```" options:0 error:&regexError];
     if (codeBlockRegex) {
@@ -183,44 +193,57 @@
 - (void)speak:(NSString *)text voiceIndex:(NSInteger)voiceIndex completion:(void (^)(void))completion {
     NSString *spoken = [self cleanTextForSpeech:text];
     if (spoken.length == 0) {
-        if (completion) completion();
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), completion);
+        }
         return;
     }
-    [self stopRecording];
-    [self stopSpeaking];
-    [self activatePlaybackSession];
 
-    self.speakCompletionBlock = completion;
-    NSInteger idx = ((voiceIndex % 3) + 3) % 3;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        VoiceChatManager *me = weakSelf;
+        if (!me) return;
+        [me stopRecording];
+        [me stopSpeaking];
+        [me activatePlaybackSession];
 
-    AVSpeechUtterance *utter = [[AVSpeechUtterance alloc] initWithString:spoken];
-    NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
-    NSMutableArray<AVSpeechSynthesisVoice *> *viVoices = [NSMutableArray array];
-    for (AVSpeechSynthesisVoice *v in voices) {
-        if ([v.language hasPrefix:@"vi"]) [viVoices addObject:v];
-    }
-    if (viVoices.count > 0) {
-        utter.voice = viVoices[(NSUInteger)idx % viVoices.count];
-    } else {
-        utter.voice = [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"] ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
-    }
+        me.speakCompletionBlock = completion;
+        NSInteger idx = ((voiceIndex % 3) + 3) % 3;
 
-    switch (idx) {
-        case 0:
-            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02;
-            utter.pitchMultiplier = 1.12;
-            break;
-        case 1:
-            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94;
-            utter.pitchMultiplier = 0.80;
-            break;
-        default:
-            utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.10;
-            utter.pitchMultiplier = 1.25;
-            break;
-    }
+        if (!me.synthesizer) {
+            me.synthesizer = [[AVSpeechSynthesizer alloc] init];
+            me.synthesizer.delegate = me;
+        }
 
-    [self.synthesizer speakUtterance:utter];
+        AVSpeechUtterance *utter = [[AVSpeechUtterance alloc] initWithString:spoken];
+        NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
+        NSMutableArray<AVSpeechSynthesisVoice *> *viVoices = [NSMutableArray array];
+        for (AVSpeechSynthesisVoice *v in voices) {
+            if ([v.language hasPrefix:@"vi"]) [viVoices addObject:v];
+        }
+        if (viVoices.count > 0) {
+            utter.voice = viVoices[(NSUInteger)idx % viVoices.count];
+        } else {
+            utter.voice = [AVSpeechSynthesisVoice voiceWithLanguage:@"vi-VN"] ?: [AVSpeechSynthesisVoice voiceWithLanguage:@"en-US"];
+        }
+
+        switch (idx) {
+            case 0:
+                utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02;
+                utter.pitchMultiplier = 1.12;
+                break;
+            case 1:
+                utter.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94;
+                utter.pitchMultiplier = 0.80;
+                break;
+            default:
+                utter.rate = AVSpeechUtteranceDefaultSpeechRate * 1.10;
+                utter.pitchMultiplier = 1.25;
+                break;
+        }
+
+        [me.synthesizer speakUtterance:utter];
+    });
 }
 
 - (void)speak:(NSString *)text completion:(void (^)(void))completion {
