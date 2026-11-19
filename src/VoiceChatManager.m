@@ -120,13 +120,12 @@
     }];
 
     AVAudioInputNode *node = self.engine.inputNode;
-    AVAudioInputNode *node = self.engine.inputNode;
     @try {
-    [node removeTapOnBus:0];
+        [node removeTapOnBus:0];
     } @catch (__unused NSException *ex) {}
     [node installTapOnBus:0 bufferSize:1024 format:nil block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
-    [weakSelf.request appendAudioPCMBuffer:buffer];
-  }];
+        [weakSelf.request appendAudioPCMBuffer:buffer];
+    }];
 
     [self.engine prepare];
     NSError *startError = nil;
@@ -160,10 +159,9 @@
 - (void)activatePlaybackSession {
     NSError *err = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
-    AVAudioSessionCategoryOptions opts = AVAudioSessionCategoryOptionDuckOthers |
-                                     AVAudioSessionCategoryOptionMixWithOthers |
+    AVAudioSessionCategoryOptions opts = AVAudioSessionCategoryOptionDefaultToSpeaker |
                                      AVAudioSessionCategoryOptionAllowBluetooth;
-    [session setCategory:AVAudioSessionCategoryPlayback
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord
                     mode:AVAudioSessionModeSpokenAudio
                  options:opts
                    error:&err];
