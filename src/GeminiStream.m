@@ -4,7 +4,6 @@
 #import "Provider.h"
 
 @interface GeminiStream () <NSURLSessionDataDelegate>
-@property (assign, nonatomic) BOOL useFastSpeed;
 @property (copy, nonatomic) NSString *key;
 @property (copy, nonatomic) NSString *model;
 @property (copy, nonatomic) NSArray *turns;
