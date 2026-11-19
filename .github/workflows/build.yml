@@ -1,4 +1,4 @@
-name: "Build IPA & DEB"
+name: Build IPA & DEB
 
 on:
   push:
