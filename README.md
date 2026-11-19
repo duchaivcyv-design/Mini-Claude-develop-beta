@@ -1,4 +1,4 @@
-# ClaudeMini 0.7.1 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
+# ClaudeMini 0.7.3 — Chat Gemini và Claude, sửa tin cũ, video, tạo ảnh và xuất Word/TXT
 
 🧠 AI — Suy luận & Tạo nội dung
 
