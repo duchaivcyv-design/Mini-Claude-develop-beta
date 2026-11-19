@@ -120,13 +120,13 @@
     }];
 
     AVAudioInputNode *node = self.engine.inputNode;
-    AVAudioFormat *format = [node outputFormatForBus:0];
+    AVAudioInputNode *node = self.engine.inputNode;
     @try {
-        [node removeTapOnBus:0];
+    [node removeTapOnBus:0];
     } @catch (__unused NSException *ex) {}
-    [node installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
-        [weakSelf.request appendAudioPCMBuffer:buffer];
-    }];
+    [node installTapOnBus:0 bufferSize:1024 format:nil block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+    [weakSelf.request appendAudioPCMBuffer:buffer];
+  }];
 
     [self.engine prepare];
     NSError *startError = nil;
