@@ -116,7 +116,6 @@
 "empty_sub_4" = "I'm ready. Where shall we start?";
 "empty_sub_5" = "Send me a question, a photo of your homework or a document.";
 "empty_sub_6" = "What shall we explore today?";
-
 "output_tokens_title" = "Response length";
 "output_tokens_note" = "Sets the maximum output-token budget. The model or provider may enforce a lower cap; a higher value does not make replies faster and may use more quota.";
 "context_memory_title" = "Conversation history sent to AI";
