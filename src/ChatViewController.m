@@ -32,6 +32,7 @@ static const CGFloat kStripHeight = 64;
 static const CGFloat kToolsRowHeight = 0;
 static const NSUInteger kGreetingCount = 6;
 static const NSUInteger kForceMaxContextChars = 4000000;
+static const NSUInteger kFastChunkReadBytes = 4 * 1024 * 1024;
 
 #pragma mark - Weak script handler
 
@@ -97,7 +98,6 @@ static UIImage *DrawCrossIconImage(CGFloat size, UIColor *color) {
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
-// A solid cog with eight teeth and a round hole, drawn with code (no emoji, no system symbol) so it looks the same on every iOS version.
 static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0);
     CGPoint c = CGPointMake(size * 0.5, size * 0.5);
@@ -379,7 +379,6 @@ static UIImage *DrawChevronRightIconImage(CGFloat size, UIColor *color) {
 @property (assign, nonatomic) BOOL webReady;
 @property (copy, nonatomic) NSString *lastWebError;
 
-// Half-width History Drawer + shifted Chat Stage
 @property (assign, nonatomic) BOOL historyDrawerOpen;
 @property (strong, nonatomic) UIView *historyDrawerView;
 @property (strong, nonatomic) UIView *historySearchWrap;
@@ -563,7 +562,7 @@ static UIImage *DrawChevronRightIconImage(CGFloat size, UIColor *color) {
     return [Theme darkMode] ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
-#pragma mark - History Drawer (the whole chat slides to the right; it is never squeezed)
+#pragma mark - History Drawer
 
 static const CGFloat kDrawerWidthRatio = 0.62;
 
@@ -581,7 +580,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     self.historyDrawerView.hidden = YES;
     [self.view addSubview:self.historyDrawerView];
 
-    // Search sits at the top, level with the close button.
     self.historySearchWrap = [[UIView alloc] initWithFrame:CGRectZero];
     self.historySearchWrap.backgroundColor = [Theme background];
     self.historySearchWrap.layer.cornerRadius = 12;
@@ -637,7 +635,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     [self.historyCloseXButton addTarget:self action:@selector(closeHistoryDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.historyDrawerView addSubview:self.historyCloseXButton];
 
-    // Settings: a full-width row with a coloured badge and a word, so a new user can see it at a glance.
     self.historySettingsButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.historySettingsButton.backgroundColor = [Theme background];
     self.historySettingsButton.layer.cornerRadius = 16;
@@ -673,7 +670,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     self.historySettingsChevron.contentMode = UIViewContentModeCenter;
     [self.historySettingsButton addSubview:self.historySettingsChevron];
 
-    // A small dot on the cog when a new version is waiting (found by the update check).
     self.historyUpdateDot = [[UIView alloc] initWithFrame:CGRectZero];
     self.historyUpdateDot.userInteractionEnabled = NO;
     self.historyUpdateDot.backgroundColor = [Theme accent];
@@ -755,7 +751,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     [self.historyTableView reloadData];
 }
 
-// Where the chat stage sits: pushed to the right by the drawer width when the drawer is open. Only the position changes, never the size.
 - (CGPoint)chatStageCenterOpen:(BOOL)open {
     CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
@@ -808,7 +803,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
         self.chatStageView.center = [self chatStageCenterOpen:NO];
         self.chatRightOverlayButton.alpha = 0;
     } completion:^(BOOL finished) {
-        if (self.historyDrawerOpen) return;   // opened again while closing
+        if (self.historyDrawerOpen) return;
         self.historyDrawerAnimating = NO;
         self.historyDrawerView.hidden = YES;
         self.chatRightOverlayButton.hidden = YES;
@@ -872,7 +867,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     }
     BOOL keyboardUp = self.keyboardOverlap > 0 && self.historySearchField.isFirstResponder;
 
-    CGFloat rowH = 38;                       // search pill and close button share one row
+    CGFloat rowH = 38;
     CGFloat closeSize = rowH;
     CGFloat sideGap = 12;
     self.historyCloseXButton.frame = CGRectMake(dw - sideGap - closeSize, topPad, closeSize, closeSize);
@@ -931,7 +926,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     }
     self.webView.alpha = 0.0;
     [self.chatStageView addSubview:self.webView];
-    // An empty chat cannot be scrolled, so a tap on the page is how the keyboard is put away.
     UITapGestureRecognizer *dismissTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(webViewTappedToDismissKeyboard)];
     dismissTap.cancelsTouchesInView = NO;
     dismissTap.delegate = self;
@@ -950,7 +944,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
 
 - (void)unlockWebViewScrolling {
     if (!self.webView) return;
-    // While the chat is empty the page is pinned (nothing to scroll, no rubber band), so the greeting card stays put.
     BOOL locked = self.chatIsEmpty;
     UIScrollView *sv = self.webView.scrollView;
     self.webView.userInteractionEnabled = YES;
@@ -1066,7 +1059,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     CGFloat h = self.view.bounds.size.height;
     CGFloat drawerW = [self historyDrawerWidth];
 
-    // The stage keeps its full size at all times (so the greeting never re-wraps); the drawer only moves it sideways.
     self.chatStageView.bounds = CGRectMake(0, 0, w, h);
     if (!self.historyDrawerAnimating) {
         self.chatStageView.center = [self chatStageCenterOpen:self.historyDrawerOpen];
@@ -1256,7 +1248,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     [self updateReasoningFastButton];
 
     self.reasoningFastHintLabel = [[UILabel alloc] initWithFrame:CGRectMake(22, 277, contentWidth, 42)];
-    self.reasoningFastHintLabel.text = @"Khi kéo suy luận cao và bật Tăng tốc ×10, hệ thống ưu tiên tốc độ phản hồi tối đa (tốn token/chi phí hơn).";
+    self.reasoningFastHintLabel.text = @"Mức thấp ưu tiên tốc độ phản hồi cực nhanh; mức cao/MAX ×8 ép suy nghĩ sâu và chi tiết tối đa.";
     self.reasoningFastHintLabel.font = [UIFont systemFontOfSize:13];
     self.reasoningFastHintLabel.numberOfLines = 2;
     self.reasoningFastHintLabel.textColor = [Theme secondaryText];
@@ -1394,8 +1386,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
                         options:(curve << 16) | UIViewAnimationOptionBeginFromCurrentState
                      animations:^{
         [self.view layoutIfNeeded];
-        // The page got shorter (keyboard up) or taller (keyboard down). Move the scroll position by the same amount so the
-        // messages stay where they are relative to the input bar, instead of jumping to the end of the chat.
         if (!wasEmpty && !self.chatIsEmpty) {
             CGFloat newHeight = self.webView.bounds.size.height;
             CGFloat maxOffset = MAX(0, sv.contentSize.height - newHeight);
@@ -1466,7 +1456,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     NSData *data = nil;
     @try {
         data = [NSJSONSerialization dataWithJSONObject:args options:0 error:nil];
-    } @catch (NSException *exception) {   // dataWithJSONObject: throws (not returns an error) on invalid values
+    } @catch (NSException *exception) {
         [DiagnosticLog log:@"callJS %@ skipped: %@", function, exception.reason];
         return;
     }
@@ -1484,7 +1474,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     if (self.deltaFlushTimer) return;
     self.pendingJSDelta = [NSMutableString string];
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 32 * NSEC_PER_MSEC), 32 * NSEC_PER_MSEC, 8 * NSEC_PER_MSEC);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_MSEC), 12 * NSEC_PER_MSEC, 3 * NSEC_PER_MSEC);
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(timer, ^{
         [weakSelf flushPendingJSDelta];
@@ -1635,7 +1625,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
                                           @"edit": L(@"edit"),
                                           @"save": L(@"save_reply"),
                                           @"share": L(@"share_image"),
-                                          @"thinking": ([AppSettings reasoningLevel] >= AIReasoningLevelHigh) ? @"Đang suy luận sâu…" : @"Đang xử lý…" }]];
+                                          @"thinking": ([AppSettings reasoningLevel] >= AIReasoningLevelHigh) ? @"Đang suy luận sâu…" : @"Đang xử lý siêu tốc…" }]];
 }
 
 - (NSArray *)webAttachmentsFrom:(NSArray *)attachments conversation:(NSString *)cid {
@@ -1672,7 +1662,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     [self unlockWebViewScrolling];
 }
 
-// The page stays invisible until it has drawn once, so the greeting fades in instead of popping in half-built.
 - (void)revealWebView {
     if (self.webView.alpha >= 1.0) return;
     [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction animations:^{
@@ -1813,7 +1802,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
-    [DiagnosticLog log:@"web content process was terminated by iOS (probably memory): reloading the page"];
+    [DiagnosticLog log:@"web content process was terminated by iOS: reloading the page"];
     self.shownGreeting = nil;
     [self loadWebPage];
 }
@@ -1945,9 +1934,9 @@ static const CGFloat kDrawerWidthRatio = 0.62;
 - (void)newChatTapped {
     [self.view endEditing:YES];
     [self closeHistoryDrawer];
-    if ([self topPresentedController] != self) return;   // a pop-up is already on screen
+    if ([self topPresentedController] != self) return;
     BOOL hasContent = [self.conversation[@"messages"] count] > 0 || self.pendingAttachments.count > 0;
-    if (!hasContent) {   // already a fresh chat: nothing to confirm
+    if (!hasContent) {
         [self startNewChat];
         return;
     }
@@ -1983,7 +1972,7 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     self.conversation = [ConversationStore newConversationWithModel:self.model];
     [self rerollGreeting];
     [self pushStrings];
-    [self resetWebScrollToTop];   // while the old (tall) chat is still there, so no stale offset survives the page shrinking
+    [self resetWebScrollToTop];
     self.chatIsEmpty = YES;
     [self callJS:@"clear" args:@[]];
     [self updateSendButton];
@@ -1991,8 +1980,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     [self reassertEmptyLockSoon];
 }
 
-// The page scroll position is native state too (UIScrollView). If it is left at, say, 3000 pt when the page becomes one
-// screen tall, the greeting is drawn half cut off until the user pulls the page. Always bring it back to 0 explicitly.
 - (void)resetWebScrollToTop {
     UIScrollView *sv = self.webView.scrollView;
     if (sv.contentOffset.y != 0 || sv.contentOffset.x != 0) [sv setContentOffset:CGPointZero animated:NO];
@@ -2081,8 +2068,6 @@ static const CGFloat kDrawerWidthRatio = 0.62;
 }
 
 - (void)applyUIScaleToNativeAndWeb {
-    // Called on every appearance of the chat: do the work only when the size or the font really changed,
-    // otherwise returning from Settings would restyle the page (and flash the greeting) for nothing.
     CGFloat sc = [AppSettings uiScale];
     NSString *sig = [NSString stringWithFormat:@"%.3f|%ld", sc, (long)[AppSettings fontStyle]];
     if (![sig isEqualToString:self.appliedNativeScaleSig]) {
@@ -2811,11 +2796,101 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     return [[firstLine substringWithRange:range] stringByAppendingString:@"…"];
 }
 
-#pragma mark - Request contents
+#pragma mark - Request contents (High-speed chunked reader for huge files)
+
+- (NSString *)decodeChunkToString:(NSData *)data {
+    if (data.length == 0) return @"";
+    NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!str) {
+        // Cắt bớt 1-3 byte cuối nếu cắt trúng ký tự UTF-8 nhiều byte
+        NSUInteger trim = MIN((NSUInteger)3, data.length);
+        for (NSUInteger i = 1; i <= trim; i++) {
+            NSData *sub = [data subdataWithRange:NSMakeRange(0, data.length - i)];
+            str = [[NSString alloc] initWithData:sub encoding:NSUTF8StringEncoding];
+            if (str) break;
+        }
+    }
+    if (!str) {
+        str = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+    }
+    return str ?: @"";
+}
+
+- (NSString *)readMassiveTextAtPath:(NSString *)path maxChars:(NSUInteger)maxChars {
+    if (path.length == 0 || maxChars == 0) return nil;
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (!fh) return nil;
+
+    unsigned long long fileSize = [fh seekToEndOfFile];
+    if (fileSize == 0) {
+        [fh closeFile];
+        return nil;
+    }
+
+    NSUInteger targetBytes = MIN(maxChars * 3, (NSUInteger)6 * 1024 * 1024);
+    if (fileSize <= targetBytes) {
+        NSMutableString *out = [NSMutableString stringWithCapacity:(NSUInteger)fileSize];
+        [fh seekToFileOffset:0];
+        while (true) {
+            NSData *chunk = [fh readDataOfLength:kFastChunkReadBytes];
+            if (chunk.length == 0) break;
+            NSString *part = [self decodeChunkToString:chunk];
+            if (part.length > 0) [out appendString:part];
+            if (out.length >= maxChars) break;
+        }
+        [fh closeFile];
+        if (out.length > maxChars) {
+            NSRange r = [out rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, maxChars)];
+            return [out substringWithRange:r];
+        }
+        return out;
+    }
+
+    // Đọc chớp nhoáng theo từng chunk 4MB từ đầu và cuối file (hỗ trợ file từ vài MB tới hàng tỷ ký tự)
+    NSUInteger halfBytes = MIN(targetBytes / 2, kFastChunkReadBytes);
+    NSMutableString *headBuf = [NSMutableString stringWithCapacity:halfBytes];
+    [fh seekToFileOffset:0];
+    NSUInteger headRead = 0;
+    while (headRead < halfBytes) {
+        NSUInteger toRead = MIN(kFastChunkReadBytes, halfBytes - headRead);
+        NSData *chunk = [fh readDataOfLength:toRead];
+        if (chunk.length == 0) break;
+        headRead += chunk.length;
+        [headBuf appendString:[self decodeChunkToString:chunk]];
+    }
+
+    unsigned long long tailStart = fileSize > halfBytes ? (fileSize - halfBytes) : 0;
+    [fh seekToFileOffset:tailStart];
+    NSMutableString *tailBuf = [NSMutableString stringWithCapacity:halfBytes];
+    while (true) {
+        NSData *chunk = [fh readDataOfLength:kFastChunkReadBytes];
+        if (chunk.length == 0) break;
+        [tailBuf appendString:[self decodeChunkToString:chunk]];
+        if (tailBuf.length >= maxChars / 2) break;
+    }
+    [fh closeFile];
+
+    NSUInteger halfChars = MAX((NSUInteger)4096, maxChars / 2);
+    NSString *headClean = headBuf;
+    if (headClean.length > halfChars) {
+        NSRange r = [headClean rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, halfChars)];
+        headClean = [headClean substringWithRange:r];
+    }
+    NSString *tailClean = tailBuf;
+    if (tailClean.length > halfChars) {
+        NSUInteger start = tailClean.length - halfChars;
+        NSRange r = [tailClean rangeOfComposedCharacterSequencesForRange:NSMakeRange(start, halfChars)];
+        tailClean = [tailClean substringWithRange:r];
+    }
+
+    return [NSString stringWithFormat:@"%@\n\n[... ĐÃ NÉN/QUÉT NHANH %llu BYTES DỮ LIỆU ĐẦU + CUỐI ĐỂ ÉP TỐC ĐỘ XỬ LÝ TỨC THÌ ...]\n\n%@",
+            headClean, fileSize, tailClean];
+}
 
 - (void)addPartsForAttachment:(NSDictionary *)att
                  conversation:(NSString *)cid
                     inlineIds:(NSSet *)inlineIds
+                   charBudget:(NSUInteger *)charBudget
                            to:(NSMutableArray *)parts {
     if (![att isKindOfClass:[NSDictionary class]]) return;
     NSString *kind = att[@"kind"];
@@ -2823,13 +2898,10 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     NSString *path = [AttachmentStore pathForFile:att[@"file"] conversation:cid];
 
     if ([kind isEqualToString:@"text"]) {
-        NSString *content = nil;
-        if (path) {
-            NSData *mapped = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
-            if (mapped.length > 0) {
-                content = [[NSString alloc] initWithData:mapped encoding:NSUTF8StringEncoding];
-                if (!content) content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-            }
+        NSUInteger allowed = (charBudget && *charBudget > 2048) ? (*charBudget - 1024) : 32768;
+        NSString *content = [self readMassiveTextAtPath:path maxChars:allowed];
+        if (charBudget && content.length > 0) {
+            *charBudget = (*charBudget > content.length) ? (*charBudget - content.length) : 0;
         }
         NSString *text = content.length > 0
             ? [NSString stringWithFormat:@"[Attached file: %@]\n%@", name, content]
@@ -2841,7 +2913,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             NSUInteger addedFrames = 0;
             for (NSString *frameFile in frames) {
                 NSString *framePath = [AttachmentStore pathForFile:frameFile conversation:cid];
-                NSData *frameData = framePath ? [NSData dataWithContentsOfFile:framePath] : nil;
+                NSData *frameData = framePath ? [NSData dataWithContentsOfFile:framePath options:NSDataReadingMappedIfSafe error:nil] : nil;
                 if (frameData.length == 0) continue;
                 [parts addObject:@{ @"type": @"image", @"mime": @"image/jpeg",
                                     @"data": [frameData base64EncodedStringWithOptions:0] }];
@@ -2852,7 +2924,8 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             [parts addObject:@{ @"type": @"text", @"text": [NSString stringWithFormat:@"[Earlier video not included: %@]", name] }];
         }
     } else if ([kind isEqualToString:@"image"] || [kind isEqualToString:@"pdf"]) {
-        NSData *data = ([inlineIds containsObject:att[@"id"]] && path) ? [NSData dataWithContentsOfFile:path] : nil;
+        NSData *data = ([inlineIds containsObject:att[@"id"]] && path)
+            ? [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil] : nil;
         if (data.length > 0) {
             NSString *encoded = [data base64EncodedStringWithOptions:0];
             if ([kind isEqualToString:@"pdf"]) {
@@ -2869,9 +2942,24 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     }
 }
 
+- (NSUInteger)resolvedContextCharLimit {
+    NSUInteger contextLimit = MAX([AppSettings contextLimitChars], kForceMaxContextChars);
+    AIProvider provider = [Provider forModelId:self.model];
+    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
+    if (inputTokenCap > 0) {
+        NSUInteger modelCharCap = (NSUInteger)inputTokenCap * 3;
+        NSUInteger reservedChars = [self effectiveSystemPrompt].length + 8192;
+        modelCharCap = modelCharCap > reservedChars ? (modelCharCap - reservedChars) : 16384;
+        contextLimit = MIN(contextLimit, modelCharCap);
+    }
+    return MAX(contextLimit, (NSUInteger)24000);
+}
+
 - (NSArray *)buildTurns {
     NSString *cid = self.conversation[@"id"];
     NSArray *messages = self.conversation[@"messages"];
+    NSUInteger contextLimit = [self resolvedContextCharLimit];
+    NSUInteger remainingTextBudget = contextLimit;
 
     NSInteger memory = [AppSettings attachmentMemory];
     NSInteger mediaMessages = 0;
@@ -2908,7 +2996,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
         NSMutableArray *parts = [NSMutableArray array];
         NSArray *atts = [message[@"attachments"] isKindOfClass:[NSArray class]] ? message[@"attachments"] : @[];
-        for (NSDictionary *att in atts) [self addPartsForAttachment:att conversation:cid inlineIds:inlineIds to:parts];
+        for (NSDictionary *att in atts) {
+            [self addPartsForAttachment:att conversation:cid inlineIds:inlineIds charBudget:&remainingTextBudget to:parts];
+        }
         if (text.length > 0) [parts addObject:@{ @"type": @"text", @"text": text }];
         if (parts.count == 0) continue;
 
@@ -2918,16 +3008,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         } else {
             [turns addObject:[@{ @"role": turnRole, @"parts": parts } mutableCopy]];
         }
-    }
-
-    NSUInteger contextLimit = MAX([AppSettings contextLimitChars], kForceMaxContextChars);
-    AIProvider provider = [Provider forModelId:self.model];
-    NSInteger inputTokenCap = [ModelStore maxInputTokensForModelId:self.model provider:provider];
-    if (inputTokenCap > 0) {
-        NSUInteger modelCharCap = (NSUInteger)inputTokenCap * 4;
-        NSUInteger reservedChars = [self effectiveSystemPrompt].length + 4096;
-        modelCharCap = modelCharCap > reservedChars ? modelCharCap - reservedChars : 16384;
-        contextLimit = MIN(contextLimit, MAX(modelCharCap, (NSUInteger)1000000));
     }
 
     while (turns.count > 1 && [self totalTextChars:turns] > contextLimit) [turns removeObjectAtIndex:0];
@@ -3022,14 +3102,24 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     for (NSString *signal in codingSignals) {
         if ([lowerQuery containsString:signal]) { codingTask = YES; break; }
     }
-    NSString *responseDirective = @"\n\n[RESPONSE COMPLETENESS] Unless the user explicitly asks for a short answer, answer every part with enough useful detail to act on it. Do not substitute a long outline for the requested explanation, implementation, or deliverable. Include relevant steps, examples, assumptions, and limitations without filler. For technical topics, identify the actual cause before proposing a change; distinguish verified facts from hypotheses. Never claim a search, API action, file edit, or build succeeded unless it actually did.";
+
+    AIReasoningLevel rLevel = [AppSettings reasoningLevel];
+    NSString *responseDirective = nil;
+    if (rLevel == AIReasoningLevelLow) {
+        responseDirective = @"\n\n[TURBO FAST MODE] Answer immediately, concisely, and directly to the point with maximum speed and zero filler.";
+    } else if (rLevel == AIReasoningLevelMedium) {
+        responseDirective = @"\n\n[FAST BALANCED MODE] Give a fast, clear, well-structured answer with practical accuracy and no fluff.";
+    } else {
+        responseDirective = @"\n\n[MAXIMUM REASONING & CREATIVITY MODE] Think deeply, explore sharp/creative solutions, identify exact root causes, verify edge cases, and deliver thorough, complete, actionable details without truncating or skipping steps.";
+    }
     selectedPrompt = [selectedPrompt stringByAppendingString:responseDirective];
+
     if (codingTask) {
-        NSString *codingDirective = @"\n\n[CODING RESPONSE REQUIREMENTS] For a coding, debugging, or source-editing request, deliver implementation rather than an outline alone. Include the complete requested function or changed file sections with all required declarations/imports; do not replace code with ellipses, placeholders, TODOs, or pseudo-code. Do not describe a large architecture while returning only a tiny code fragment. When the user asks for a complete file or a large implementation, provide the full requested code, not a shortened sample. Do not arbitrarily stop after the design or first few functions; continue until every requested component is implemented. Preserve unrelated behavior and make only requested changes. Check method names, property declarations, types, API payload fields, and error paths for consistency. Explain the exact files and behavior changed, then clearly state anything not build-tested. Prefer complete, compilable code over an inflated architecture proposal. The app automatically requests continuation when the provider reports its output-token limit; continue from the exact next line without repeating earlier code. If continuation cannot proceed because the model context or provider limit is reached, state the precise remaining section instead of claiming the work is complete.";
+        NSString *codingDirective = @"\n\n[CODING RESPONSE REQUIREMENTS] Deliver complete, compilable code for every requested function or changed file section with all required declarations/imports. Never replace code with ellipses, placeholders, TODOs, or pseudo-code. When continuing across chunks, resume from the exact next character without repeating already-emitted text.";
         selectedPrompt = [selectedPrompt stringByAppendingString:codingDirective];
     }
     if ([AppSettings webSearchEnabled]) {
-        selectedPrompt = [selectedPrompt stringByAppendingString:@"\n\n[WEB SEARCH ENABLED] A real provider-managed web search tool is attached to this request. When the user explicitly asks to search, or the answer depends on current, recent, external, or verifiable information, you MUST invoke the search tool before answering and base factual claims on the returned results. Do not claim to have searched unless the API actually returned results. If the selected model/provider rejects or does not support the tool, state that limitation plainly instead of pretending the search happened." ];
+        selectedPrompt = [selectedPrompt stringByAppendingString:@"\n\n[WEB SEARCH ENABLED] A real provider-managed web search tool is attached to this request. When the user explicitly asks to search, or the answer depends on current, recent, external, or verifiable information, you MUST invoke the search tool before answering and base factual claims on the returned results."];
     }
     return selectedPrompt;
 }
@@ -3048,79 +3138,125 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
             (unsigned long)turns.count, (unsigned long)images, (unsigned long)pdfs, mediaChars / 1048576.0, (unsigned long)textChars];
 }
 
+- (NSString *)stripRepeatedPrefixFrom:(NSString *)chunk againstExisting:(NSString *)existing {
+    if (chunk.length == 0 || existing.length == 0) return chunk;
+    NSUInteger checkLen = MIN((NSUInteger)400, MIN(existing.length, chunk.length));
+    NSString *tail = [existing substringFromIndex:existing.length - checkLen];
+    for (NSUInteger len = checkLen; len >= 16; len--) {
+        NSString *suffix = [tail substringFromIndex:tail.length - len];
+        if ([chunk hasPrefix:suffix]) {
+            return [chunk substringFromIndex:len];
+        }
+    }
+    return chunk;
+}
+
 - (void)launchRequestStreaming:(BOOL)useStreaming {
     self.attemptIsStreaming = useStreaming;
     AIProvider provider = [Provider forModelId:self.model];
     NSString *key = [KeyStore loadKeyForProvider:provider] ?: @"";
-    NSMutableArray *turns = [[self buildTurns] mutableCopy];
-    NSString *system = [self effectiveSystemPrompt];
-    if (self.longReplyAccumulator.length > 0) {
-        [turns addObject:[@{ @"role": @"assistant", @"parts": @[@{ @"type": @"text", @"text": [self.longReplyAccumulator copy] }] } mutableCopy]];
-        NSString *continueInstruction = @"Continue the response exactly where the previous assistant message ended. Do not repeat, summarize, shorten, or rewrite any text already provided. If writing code, continue the same file/code block with identical indentation and complete syntax; include every remaining line, declaration, implementation, and closing delimiter. Do not replace code with placeholders or ellipses. Finish the original request fully.";
-        [turns addObject:[@{ @"role": @"user", @"parts": @[@{ @"type": @"text", @"text": continueInstruction }] } mutableCopy]];
+    NSString *modelId = [self.model copy];
+    NSString *accumulated = [self.longReplyAccumulator copy];
 
-        NSInteger inputCap = [ModelStore maxInputTokensForModelId:self.model provider:[Provider forModelId:self.model]];
-        NSUInteger safeCharCap = inputCap > 0 ? MAX((NSUInteger)inputCap * 4, (NSUInteger)1000000) : 1000000;
-        NSUInteger reserve = system.length + 4096;
-        safeCharCap = safeCharCap > reserve ? safeCharCap - reserve : 16000;
-        while (turns.count > 3 && [self totalTextChars:turns] > safeCharCap) [turns removeObjectAtIndex:0];
-        while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
-    }
-    id<ChatStreaming> stream = (provider == AIProviderClaude)
-        ? (id<ChatStreaming>)[[ClaudeStream alloc] initWithKey:key model:self.model turns:turns system:system]
-        : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:self.model turns:turns system:system];
-    BOOL fastEnabled = [AppSettings fastModeEnabled] && !self.didFallbackFromFastMode;
-    if (provider == AIProviderClaude) {
-        ((ClaudeStream *)stream).useFastSpeed = fastEnabled;
-    } else if ([stream respondsToSelector:NSSelectorFromString(@"setUseFastSpeed:")]) {
-        [(id)stream setValue:@(fastEnabled) forKey:@"useFastSpeed"];
-    }
-    stream.useStreaming = useStreaming;
-    self.stream = stream;
-    if (!self.streamGeneratedAttachments) self.streamGeneratedAttachments = [NSMutableArray array];
-    self.requestStartTime = CFAbsoluteTimeGetCurrent();
-    [DiagnosticLog log:@"request: %@ model=%@ mode=%@ fast=%d %@ systemChars=%lu", [Provider nameFor:provider], self.model,
-                       useStreaming ? @"stream" : @"single", fastEnabled, [self summaryOfTurns:turns], (unsigned long)system.length];
     __weak typeof(self) weakSelf = self;
-    __weak id<ChatStreaming> weakStream = stream;
-    stream.onDelta = ^(NSString *text) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream || text.length == 0) return;
-        [me.streamBuffer appendString:text];
-        if (me.pendingJSDelta) {
-            [me.pendingJSDelta appendString:text];
-        } else {
-            [me callJS:@"delta" args:@[text]];
+        if (!me || !me.streaming) return;
+
+        NSMutableArray *turns = [[me buildTurns] mutableCopy];
+        NSString *system = [me effectiveSystemPrompt];
+
+        if (accumulated.length > 0) {
+            [turns addObject:[@{ @"role": @"assistant", @"parts": @[@{ @"type": @"text", @"text": accumulated }] } mutableCopy]];
+            NSUInteger tailLen = MIN((NSUInteger)160, accumulated.length);
+            NSString *exactTail = [accumulated substringFromIndex:accumulated.length - tailLen];
+            NSString *continueInstruction = [NSString stringWithFormat:
+                @"Continue immediately from the exact end of your previous message without repeating a single word, line, or markdown fence. Last characters:\n<<<%@>>>\nOutput ONLY the remaining continuation.",
+                exactTail];
+            [turns addObject:[@{ @"role": @"user", @"parts": @[@{ @"type": @"text", @"text": continueInstruction }] } mutableCopy]];
+
+            NSUInteger safeCharCap = [me resolvedContextCharLimit];
+            while (turns.count > 3 && [me totalTextChars:turns] > safeCharCap) [turns removeObjectAtIndex:0];
+            while (turns.count > 1 && [turns.firstObject[@"role"] isEqualToString:@"assistant"]) [turns removeObjectAtIndex:0];
         }
-    };
-    stream.onImage = ^(NSData *data, NSString *mimeType) {
-        ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream || data.length == 0) return;
-        NSString *errorKey = nil;
-        NSString *imageName = @"generated-image.jpg";
-        NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
-                                                         conversation:me.conversation[@"id"] errorKey:&errorKey];
-        if (attachment) {
-            [me.streamGeneratedAttachments addObject:attachment];
-            [DiagnosticLog log:@"generated image saved: bytes=%@ mime=%@", attachment[@"bytes"], mimeType ?: @"image/*"];
-        } else {
-            [DiagnosticLog log:@"generated image could not be stored: %@", errorKey ?: @"unknown"];
-        }
-    };
-    stream.onUsage = ^(long long inputTokens, long long outputTokens) {
-        ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream) return;
-        [AppSettings addDailyTokenUsage:(inputTokens + outputTokens)];
-        [me updateDailyTokenPrompt];
-        [DiagnosticLog log:@"usage: input=%lld output=%lld dayTotal=%lld", inputTokens, outputTokens, [AppSettings dailyTokenUsage]];
-    };
-    stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
-        ChatViewController *me = weakSelf;
-        if (!me || me.stream != weakStream) return;
-        [me flushPendingJSDelta];
-        [me streamFinishedWithError:error status:status detail:detail];
-    };
-    [stream start];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            ChatViewController *strongMe = weakSelf;
+            if (!strongMe || !strongMe.streaming) return;
+
+            id<ChatStreaming> stream = (provider == AIProviderClaude)
+                ? (id<ChatStreaming>)[[ClaudeStream alloc] initWithKey:key model:modelId turns:turns system:system]
+                : (id<ChatStreaming>)[[GeminiStream alloc] initWithKey:key model:modelId turns:turns system:system];
+            BOOL fastEnabled = [AppSettings fastModeEnabled] && !strongMe.didFallbackFromFastMode;
+            if (provider == AIProviderClaude) {
+                ((ClaudeStream *)stream).useFastSpeed = fastEnabled;
+            } else if ([stream respondsToSelector:NSSelectorFromString(@"setUseFastSpeed:")]) {
+                [(id)stream setValue:@(fastEnabled) forKey:@"useFastSpeed"];
+            }
+            stream.useStreaming = useStreaming;
+            strongMe.stream = stream;
+            if (!strongMe.streamGeneratedAttachments) strongMe.streamGeneratedAttachments = [NSMutableArray array];
+            strongMe.requestStartTime = CFAbsoluteTimeGetCurrent();
+            [DiagnosticLog log:@"request: %@ model=%@ mode=%@ fast=%d %@ systemChars=%lu", [Provider nameFor:provider], modelId,
+                               useStreaming ? @"stream" : @"single", fastEnabled, [strongMe summaryOfTurns:turns], (unsigned long)system.length];
+
+            __weak id<ChatStreaming> weakStream = stream;
+            __block BOOL checkedOverlap = (strongMe.longReplyAccumulator.length == 0);
+            stream.onDelta = ^(NSString *text) {
+                ChatViewController *inner = weakSelf;
+                if (!inner || inner.stream != weakStream || text.length == 0) return;
+
+                NSString *cleanText = text;
+                if (!checkedOverlap && inner.longReplyAccumulator.length > 0) {
+                    NSString *probe = [inner.streamBuffer stringByAppendingString:text];
+                    if (probe.length >= 32) {
+                        NSString *deduped = [inner stripRepeatedPrefixFrom:probe againstExisting:inner.longReplyAccumulator];
+                        if (deduped.length < probe.length) {
+                            cleanText = deduped;
+                            [inner.streamBuffer setString:@""];
+                        }
+                        checkedOverlap = YES;
+                    }
+                }
+                if (cleanText.length == 0) return;
+
+                [inner.streamBuffer appendString:cleanText];
+                if (inner.pendingJSDelta) {
+                    [inner.pendingJSDelta appendString:cleanText];
+                } else {
+                    [inner callJS:@"delta" args:@[cleanText]];
+                }
+            };
+            stream.onImage = ^(NSData *data, NSString *mimeType) {
+                ChatViewController *inner = weakSelf;
+                if (!inner || inner.stream != weakStream || data.length == 0) return;
+                NSString *errorKey = nil;
+                NSString *imageName = @"generated-image.jpg";
+                NSDictionary *attachment = [AttachmentStore importImageData:data name:imageName
+                                                                 conversation:inner.conversation[@"id"] errorKey:&errorKey];
+                if (attachment) {
+                    [inner.streamGeneratedAttachments addObject:attachment];
+                    [DiagnosticLog log:@"generated image saved: bytes=%@ mime=%@", attachment[@"bytes"], mimeType ?: @"image/*"];
+                } else {
+                    [DiagnosticLog log:@"generated image could not be stored: %@", errorKey ?: @"unknown"];
+                }
+            };
+            stream.onUsage = ^(long long inputTokens, long long outputTokens) {
+                ChatViewController *inner = weakSelf;
+                if (!inner || inner.stream != weakStream) return;
+                [AppSettings addDailyTokenUsage:(inputTokens + outputTokens)];
+                [inner updateDailyTokenPrompt];
+                [DiagnosticLog log:@"usage: input=%lld output=%lld dayTotal=%lld", inputTokens, outputTokens, [AppSettings dailyTokenUsage]];
+            };
+            stream.onFinish = ^(GeminiStreamError error, NSInteger status, NSString *detail) {
+                ChatViewController *inner = weakSelf;
+                if (!inner || inner.stream != weakStream) return;
+                [inner flushPendingJSDelta];
+                [inner streamFinishedWithError:error status:status detail:detail];
+            };
+            [stream start];
+        });
+    });
 }
 
 - (void)streamFinishedWithError:(GeminiStreamError)error status:(NSInteger)status detail:(NSString *)detail {
@@ -3130,22 +3266,20 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
                        (unsigned long)partial.length, (CFAbsoluteTimeGetCurrent() - self.requestStartTime) * 1000, ClippedForLog(detail)];
 
     AIProvider currentProvider = [Provider forModelId:self.model];
-    BOOL interruptedMidStream = (error == GeminiStreamErrorNetwork || error == GeminiStreamErrorServer) && partial.length > 0 && self.longReplyContinuationCount < 6;
+    BOOL interruptedMidStream = (error == GeminiStreamErrorNetwork || error == GeminiStreamErrorServer) && partial.length > 0 && self.longReplyContinuationCount < 8;
     if (((error == GeminiStreamErrorNone && status == 200 && [detail isEqualToString:@"__OUTPUT_LIMIT_REACHED__"]) || interruptedMidStream) && partial.length > 0) {
-        const NSUInteger kMaxAutomaticContinuations = 10;
-        NSInteger continuationInputCap = [ModelStore maxInputTokensForModelId:self.model provider:currentProvider];
-        NSUInteger continuationCharCap = continuationInputCap > 0 ? MAX((NSUInteger)continuationInputCap * 4, (NSUInteger)1500000) : 1500000;
-        NSUInteger continuationPromptChars = [self effectiveSystemPrompt].length + 8192;
-        continuationCharCap = continuationCharCap > continuationPromptChars ? continuationCharCap - continuationPromptChars : 0;
+        const NSUInteger kMaxAutomaticContinuations = 12;
+        NSUInteger continuationCharCap = [self resolvedContextCharLimit];
         BOOL continuationFitsContext = continuationCharCap > 0 &&
-            self.longReplyAccumulator.length + partial.length < (continuationCharCap * 3) / 4;
+            (self.longReplyAccumulator.length + partial.length) < ((continuationCharCap * 4) / 5);
         if (self.longReplyContinuationCount < kMaxAutomaticContinuations &&
-            self.longReplyAccumulator.length + partial.length < 3000000 && continuationFitsContext) {
+            (self.longReplyAccumulator.length + partial.length) < 3000000 && continuationFitsContext) {
             if (!self.longReplyAccumulator) self.longReplyAccumulator = [NSMutableString string];
             [self.longReplyAccumulator appendString:partial];
             self.longReplyContinuationCount++;
             self.stream = nil;
             self.streamBuffer = [NSMutableString string];
+            [self flushPendingJSDelta];
             [DiagnosticLog log:@"continuing response segment %lu/%lu accumulatedChars=%lu",
                               (unsigned long)self.longReplyContinuationCount, (unsigned long)kMaxAutomaticContinuations,
                               (unsigned long)self.longReplyAccumulator.length];
@@ -3156,10 +3290,6 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
         }
         detail = @"Đã đạt giới hạn an toàn của chuỗi tự nối tiếp. Phần đã tạo được giữ lại; gửi 'tiếp tục' để lấy phần còn lại.";
     }
-    NSInteger claudeModelOutputCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderClaude];
-    NSInteger configuredOutputCap = [AppSettings maxOutputTokens];
-    BOOL largeClaudeReply = currentProvider == AIProviderClaude &&
-        (configuredOutputCap > 21333 || (configuredOutputCap == 0 && claudeModelOutputCap > 21333));
 
     NSString *lowerDetail = detail.lowercaseString ?: @"";
     BOOL permanentQuota = status == 429 &&
@@ -3172,17 +3302,16 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
          [lowerDetail containsString:@"payment"] || [lowerDetail containsString:@"quota_exceeded"]);
 
     BOOL wasFastRequest = self.stream && [AppSettings fastModeEnabled] && !self.didFallbackFromFastMode;
-    NSString *fastErrorText = lowerDetail;
     BOOL fastRateLimited = wasFastRequest && !permanentQuota && (status == 429 || status == 529);
     BOOL fastRejected = wasFastRequest && (status == 400 || status == 403) &&
-                        ([fastErrorText containsString:@"fast"] || [fastErrorText containsString:@"speed"]);
+                        ([lowerDetail containsString:@"fast"] || [lowerDetail containsString:@"speed"]);
     if ((fastRateLimited || fastRejected) && partial.length == 0 &&
         self.streamGeneratedAttachments.count == 0 && !self.didFallbackFromFastMode) {
         self.didFallbackFromFastMode = YES;
         NSTimeInterval fastRetryAfter = self.stream.retryAfterSeconds;
         self.stream = nil;
-        [DiagnosticLog log:@"Fast mode rejected/limited; retrying once at standard speed"];
-        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(1.0, MIN(900.0, fastRetryAfter)) : 0.4;
+        [DiagnosticLog log:@"Fast mode rejected/limited; retrying at standard speed"];
+        NSTimeInterval fallbackDelay = fastRateLimited ? MAX(0.3, MIN(5.0, fastRetryAfter)) : 0.15;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fallbackDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
@@ -3191,14 +3320,14 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     BOOL retryableStatus = (status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529);
     BOOL transientServer = (error == GeminiStreamErrorServer || error == GeminiStreamErrorRateLimited) && retryableStatus;
-    NSInteger retryLimit = status == 429 ? 1 : 3;
+    NSInteger retryLimit = status == 429 ? 2 : 3;
     if (transientServer && !permanentQuota && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.streamRetryCount < retryLimit) {
         NSTimeInterval providerDelay = self.stream.retryAfterSeconds;
         self.stream = nil;
         self.streamRetryCount++;
-        NSTimeInterval backoff = status == 429 ? 8.0 : (self.streamRetryCount == 1 ? 1.5 : (self.streamRetryCount == 2 ? 4.0 : 8.0));
-        NSTimeInterval delay = MAX(backoff, MIN(900.0, providerDelay));
-        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.0fs", (long)status, (long)self.streamRetryCount, delay];
+        NSTimeInterval backoff = status == 429 ? 1.5 : (0.5 * self.streamRetryCount);
+        NSTimeInterval delay = providerDelay > 0 ? MIN(6.0, MAX(backoff, providerDelay)) : backoff;
+        [DiagnosticLog log:@"server overload HTTP %ld: retry %ld after %.1fs", (long)status, (long)self.streamRetryCount, delay];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
         });
@@ -3257,19 +3386,9 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
 
     if (error == GeminiStreamErrorNetwork && partial.length == 0 && self.streamGeneratedAttachments.count == 0 && self.attemptIsStreaming) {
         self.stream = nil;
-        if (largeClaudeReply && self.streamRetryCount < 1) {
-            self.streamRetryCount++;
-            [DiagnosticLog log:@"large Claude stream failed before first event: retrying stream once"];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (self.streaming && self.stream == nil) [self launchRequestStreaming:self.attemptIsStreaming];
-            });
-            return;
-        }
-        if (!largeClaudeReply) {
-            [DiagnosticLog log:@"live stream failed before any text: retrying once as a single request"];
-            [self launchRequestStreaming:NO];
-            return;
-        }
+        [DiagnosticLog log:@"live stream failed before any text: retrying immediately as a single request"];
+        [self launchRequestStreaming:NO];
+        return;
     }
 
     [self stopDeltaFlushTimer];
