@@ -1,4 +1,4 @@
-name: "Build IPA & DEB"
+Đổi máy macoios thành unbututu name: "Build IPA & DEB"
 
 on:
   push:
@@ -26,8 +26,7 @@ concurrency:
 
 jobs:
   build:
-    # ⚠️ macOS đã được đổi thành Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 45
     env:
       REF: ${{ github.event.release.tag_name || inputs.ref || github.ref }}
@@ -39,23 +38,20 @@ jobs:
           ref: ${{ env.REF }}
           fetch-depth: 0
 
-      # Thay cho "Select Xcode" + "Toolchain info" (macOS-only)
-      - name: Toolchain info (Linux)
-        run: |
-          set -euo pipefail
-          uname -a
-          python3 --version
-          dpkg-deb --version | head -n1 || true
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
-      # Thay cho "brew install ldid dpkg"
-      - name: Install build tools (apt)
+      - name: Toolchain info
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            dpkg-dev zip unzip python3 ldid || {
-              echo "::warning::ldid không có trong apt của bản này, sẽ bỏ qua ký tự do."
-            }
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: cai deo ma may
+        run: |
+          brew install ldid dpkg
 
       - name: Build IPA using repository build.sh
         id: build
@@ -63,7 +59,6 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x build.sh
-          # ⚠️ build.sh phải chạy được trên Linux; nếu nó gọi xcodebuild thì sẽ fail.
           ./build.sh
           shopt -s nullglob
           ipa_files=(dist/*.ipa)
@@ -104,11 +99,10 @@ jobs:
           bundle_id="com.gestaltx.app"
           app_version="1.0.0"
           if [[ -f "$info_plist" ]]; then
-            # Thay PlistBuddy bằng python3 + plistlib
-            parsed_id="$(python3 -c "import plistlib,sys;print(plistlib.load(open(sys.argv[1],'rb')).get('CFBundleIdentifier','') or '')" "$info_plist" 2>/dev/null || true)"
-            parsed_ver="$(python3 -c "import plistlib,sys;print(plistlib.load(open(sys.argv[1],'rb')).get('CFBundleShortVersionString','') or '')" "$info_plist" 2>/dev/null || true)"
+            parsed_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$info_plist" 2>/dev/null || true)"
+            parsed_ver="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$info_plist" 2>/dev/null || true)"
             if [[ -z "$parsed_ver" ]]; then
-              parsed_ver="$(python3 -c "import plistlib,sys;print(plistlib.load(open(sys.argv[1],'rb')).get('CFBundleVersion','') or '')" "$info_plist" 2>/dev/null || true)"
+              parsed_ver="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$info_plist" 2>/dev/null || true)"
             fi
             [[ -n "$parsed_id" ]] && bundle_id="$parsed_id"
             [[ -n "$parsed_ver" ]] && app_version="$parsed_ver"
@@ -122,8 +116,7 @@ jobs:
           if [[ -f "$main_bin" ]] && command -v ldid >/dev/null 2>&1; then
             ldid -S "$main_bin" || true
           fi
-          printf "Package: %s\nName: %s\nVersion: %s\nArchitecture: iphoneos-arm64\nMaintainer: GestaltX\nSection: Utilities\nDescription: %s packaged for jailbroken iOS (rootless).\n" \
-            "$bundle_id" "$app_name" "$clean_ver" "$app_name" > "$pkg_root/DEBIAN/control"
+          printf "Package: %s\nName: %s\nVersion: %s\nArchitecture: iphoneos-arm64\nMaintainer: GestaltX\nSection: Utilities\nDescription: %s packaged for jailbroken iOS (rootless).\n" "$bundle_id" "$app_name" "$clean_ver" "$app_name" > "$pkg_root/DEBIAN/control"
           printf "#!/bin/sh\nset -e\nif command -v uicache >/dev/null 2>&1; then\n  uicache -a || true\nfi\nexit 0\n" > "$pkg_root/DEBIAN/postinst"
           chmod 0755 "$pkg_root/DEBIAN/postinst"
           deb_out="dist/${app_name}_${clean_ver}_iphoneos-arm64.deb"
