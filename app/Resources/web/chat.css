@@ -4,6 +4,8 @@
   --accent: #C96442; --onaccent: #FFFFFF; --link: #C96442; --card: rgba(255,255,255,.9); --code-bg: #F6F4EC;
   --err-bg: #FCEDEA; --err-border: #EBC4BB; --err-text: #8F2F1D; --toast-bg: #29261B; --toast-fg: #FFFFFF;
   --hl-kw: #A5472B; --hl-str: #3F7D58; --hl-com: #8A8677; --hl-num: #2F6B8C; --hl-title: #7B4FA2; --hl-attr: #B0731A;
+  --uiscale: 1;
+  --serif: Georgia, "Times New Roman", serif;
 }
 html, body {
   margin: 0;
@@ -14,24 +16,23 @@ html, body {
   touch-action: pan-y;
   -webkit-text-size-adjust: 100%;
 }
-/* "Font Claude" = serif titles and answers; "Font hệ thống" swaps it for the system font (set from the app). */
-:root { --serif: Georgia, "Times New Roman", serif; }
 body {
   color: var(--text);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
+  font-size: calc(16px * var(--uiscale));
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
 #messages {
   max-width: 760px;
   margin: 0 auto;
-  padding: 20px 16px 36px 16px;
+  padding: calc(20px * var(--uiscale)) calc(16px * var(--uiscale)) calc(36px * var(--uiscale)) calc(16px * var(--uiscale));
   overflow-y: visible;
   touch-action: pan-y;
 }
 .row {
   position: relative;
-  margin-bottom: 22px;
+  margin-bottom: calc(22px * var(--uiscale));
 }
 
 /* user message: soft beige bubble on the right */
@@ -47,10 +48,10 @@ body {
 .bubble {
   position: relative;
   background: var(--bubble);
-  border-radius: 18px;
-  padding: 10px 14px;
+  border-radius: calc(18px * var(--uiscale));
+  padding: calc(10px * var(--uiscale)) calc(14px * var(--uiscale));
   max-width: 88%;
-  font-size: 16.5px;
+  font-size: calc(16.5px * var(--uiscale));
   line-height: 1.45;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -60,13 +61,13 @@ body {
 
 .bubble .btext { white-space: pre-wrap; word-wrap: break-word; }
 .atts { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: flex-start; align-items: flex-start; }
-.bubble .atts + .btext { margin-top: 4px; }
+.bubble .atts + .btext { margin-top: calc(4px * var(--uiscale)); }
 .thumb {
-  width: 96px;
-  height: 96px;
+  width: calc(96px * var(--uiscale));
+  height: calc(96px * var(--uiscale));
   object-fit: cover;
-  border-radius: 10px;
-  margin: 0 6px 6px 0;
+  border-radius: calc(10px * var(--uiscale));
+  margin: 0 calc(6px * var(--uiscale)) calc(6px * var(--uiscale)) 0;
   background: var(--border);
 }
 .file {
@@ -76,25 +77,25 @@ body {
   align-items: center;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 10px;
-  margin: 0 6px 6px 0;
+  border-radius: calc(10px * var(--uiscale));
+  padding: calc(6px * var(--uiscale)) calc(10px * var(--uiscale));
+  margin: 0 calc(6px * var(--uiscale)) calc(6px * var(--uiscale)) 0;
   max-width: 100%;
   box-sizing: border-box;
 }
 .file .ext {
-  font-size: 11px;
+  font-size: calc(11px * var(--uiscale));
   font-weight: 700;
   color: var(--onaccent);
   background: var(--accent);
-  border-radius: 5px;
-  padding: 2px 5px;
-  margin-right: 8px;
+  border-radius: calc(5px * var(--uiscale));
+  padding: calc(2px * var(--uiscale)) calc(5px * var(--uiscale));
+  margin-right: calc(8px * var(--uiscale));
   -webkit-flex-shrink: 0;
   flex-shrink: 0;
 }
 .file .fname {
-  font-size: 14px;
+  font-size: calc(14px * var(--uiscale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -102,17 +103,22 @@ body {
 }
 
 /* assistant message: plain serif text, like Claude */
-.assistant-media { margin: 0 0 10px 0; }
-.generated-image { display: block; width: auto; max-width: 100%; max-height: 420px; border-radius: 12px; background: var(--sel); object-fit: contain; }
+.assistant-media { margin: 0 0 calc(10px * var(--uiscale)) 0; }
+.generated-image { display: block; width: auto; max-width: 100%; max-height: 420px; border-radius: calc(12px * var(--uiscale)); background: var(--sel); object-fit: contain; }
 .row.assistant .body {
   position: relative;
   font-family: var(--serif);
-  font-size: 17.5px;
+  font-size: calc(17.5px * var(--uiscale));
   line-height: 1.6;
   word-wrap: break-word;
   overflow-wrap: break-word;
   -webkit-user-select: text;
   user-select: text;
+}
+.row.assistant .body .md,
+.row.assistant .body .mdc {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 /* collapsible long message block + bottom-right expand/collapse arrow */
@@ -123,7 +129,7 @@ body {
   transition: max-height .24s ease;
 }
 .msg-collapsed {
-  padding-bottom: 34px;
+  padding-bottom: calc(34px * var(--uiscale));
 }
 .msg-collapsed::after {
   content: "";
@@ -143,7 +149,7 @@ body {
 .msg-expand-btn {
   position: absolute;
   right: 6px;
-  bottom: 34px;
+  bottom: calc(34px * var(--uiscale));
   width: 28px;
   height: 28px;
   padding: 0;
@@ -166,7 +172,7 @@ body {
 }
 .row.user .msg-expand-btn {
   right: 8px;
-  bottom: 36px;
+  bottom: calc(36px * var(--uiscale));
 }
 .msg-expand-btn:active {
   background: var(--sel);
@@ -174,8 +180,8 @@ body {
 
 .dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: calc(10px * var(--uiscale));
+  height: calc(10px * var(--uiscale));
   margin-left: 3px;
   border-radius: 50%;
   background: var(--accent);
@@ -187,7 +193,7 @@ body {
 @keyframes pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
 
 /* small action buttons under a reply */
-.actions { margin-top: 8px; }
+.actions { margin-top: calc(8px * var(--uiscale)); }
 .act {
   -webkit-appearance: none;
   appearance: none;
@@ -195,10 +201,10 @@ body {
   background: transparent;
   color: var(--sec);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
-  font-size: 13px;
-  padding: 5px 11px;
-  margin: 0 6px 0 0;
-  border-radius: 8px;
+  font-size: calc(13px * var(--uiscale));
+  padding: calc(5px * var(--uiscale)) calc(11px * var(--uiscale));
+  margin: 0 calc(6px * var(--uiscale)) 0 0;
+  border-radius: calc(8px * var(--uiscale));
   -webkit-user-select: none;
   user-select: none;
 }
@@ -208,14 +214,14 @@ body {
 .row.error {
   background: var(--err-bg);
   border: 1px solid var(--err-border);
-  border-radius: 12px;
-  padding: 12px 14px;
+  border-radius: calc(12px * var(--uiscale));
+  padding: calc(12px * var(--uiscale)) calc(14px * var(--uiscale));
   color: var(--err-text);
-  font-size: 15px;
+  font-size: calc(15px * var(--uiscale));
   line-height: 1.45;
 }
 .errtext { white-space: pre-wrap; word-wrap: break-word; }
-.row.error .retry { margin-top: 10px; margin-right: 0; border-color: var(--err-border); color: var(--err-text); }
+.row.error .retry { margin-top: calc(10px * var(--uiscale)); margin-right: 0; border-color: var(--err-border); color: var(--err-text); }
 
 /* empty state */
 .empty {
@@ -243,11 +249,11 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
 }
 .empty h1 {
   font-family: var(--serif);
-  font-size: 30px;
+  font-size: calc(30px * var(--uiscale));
   font-weight: 600;
   margin: 0 0 6px 0;
 }
-.empty p { margin: 0; color: var(--sec); font-size: 16px; }
+.empty p { margin: 0; color: var(--sec); font-size: calc(16px * var(--uiscale)); }
 
 /* scroll-to-latest button */
 #jump {
@@ -286,7 +292,7 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
   color: var(--toast-fg);
   padding: 8px 14px;
   border-radius: 16px;
-  font-size: 14px;
+  font-size: calc(14px * var(--uiscale));
   opacity: 0;
   pointer-events: none;
   -webkit-transition: opacity .2s;
@@ -298,7 +304,7 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
 /* ---------- Markdown inside a reply ---------- */
 .md > .mdc > :first-child, .md > :first-child { margin-top: 0; }
 .md p { margin: 0 0 .85em 0; }
-.md > .mdc > :last-child { margin-bottom: 0; }
+.md > .mdc > :last-child, .md > :last-child { margin-bottom: 0; }
 .md h1, .md h2, .md h3, .md h4 {
   font-family: var(--serif);
   font-weight: 600;
@@ -340,7 +346,7 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
   margin: .9em 0;
   background: var(--code-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: calc(10px * var(--uiscale));
   overflow: hidden;
 }
 .md .codehead {
@@ -350,21 +356,21 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
   justify-content: space-between;
   -webkit-align-items: center;
   align-items: center;
-  padding: 5px 8px 5px 12px;
+  padding: calc(5px * var(--uiscale)) calc(8px * var(--uiscale)) calc(5px * var(--uiscale)) calc(12px * var(--uiscale));
   border-bottom: 1px solid var(--border);
   background: var(--sel);
   font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
 }
-.md .codehead .lang { font-size: 12px; color: var(--sec); text-transform: lowercase; }
-.md .codehead .act { padding: 3px 9px; margin: 0; font-size: 12px; }
-.md .codeblock pre { margin: 0; padding: 10px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.md .codehead .lang { font-size: calc(12px * var(--uiscale)); color: var(--sec); text-transform: lowercase; }
+.md .codehead .act { padding: calc(3px * var(--uiscale)) calc(9px * var(--uiscale)); margin: 0; font-size: calc(12px * var(--uiscale)); }
+.md .codeblock pre { margin: 0; padding: calc(10px * var(--uiscale)) calc(12px * var(--uiscale)); overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .md .codeblock code {
   display: block;
   background: transparent;
   padding: 0;
   border-radius: 0;
   font-family: Menlo, Courier, monospace;
-  font-size: 13px;
+  font-size: calc(13px * var(--uiscale));
   line-height: 1.5;
   white-space: pre;
   color: var(--text);
@@ -384,4 +390,4 @@ html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
 .md .katex { font-size: 1.05em; }
 .md .katex-display { margin: .9em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; -webkit-overflow-scrolling: touch; }
 
-.thinking-label { color: var(--sec); font-size: 12px; margin: 4px 0 6px 2px; opacity: .9; }
+.thinking-label { color: var(--sec); font-size: calc(12px * var(--uiscale)); margin: calc(4px * var(--uiscale)) 0 calc(6px * var(--uiscale)) 2px; opacity: .9; }
