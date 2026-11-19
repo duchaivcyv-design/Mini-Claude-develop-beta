@@ -757,6 +757,16 @@ static NSString *WallpaperFileKey(NSInteger index) {
     return image;
 }
 
+// The picture of the icon that is in use now: the key screen and the greeting show the same icon as the Home Screen.
++ (UIImage *)activeIconImage {
+    NSString *name = [self iconNameForSkin:[self activeIconSkin]];
+    if (name.length > 0) {
+        UIImage *image = [self iconPreviewForSkin:[self activeIconSkin]];
+        if (image) return image;
+    }
+    return [UIImage imageNamed:@"logo.png"];
+}
+
 + (NSString *)iconDisplayNameForSkin:(ThemeSkin)skin {
     NSString *name = [self iconNameForSkin:skin];
     return name.length > 0 ? name : L(@"icon_default");

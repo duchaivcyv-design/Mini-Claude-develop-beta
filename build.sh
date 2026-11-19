@@ -7,6 +7,16 @@ cd "$(dirname "$0")"
 APP="ClaudeMini"
 BUNDLE_ID="com.puc.claudemini"
 VERSION="$(tr -d '[:space:]' < VERSION)"
+# On GitHub Actions every build gets its run number: the app uses it to tell a newer build of the same version apart
+# (the .deb version becomes 0.7.3-46, so the package manager also sees it as an upgrade).
+BUILD_NUM="${GITHUB_RUN_NUMBER:-1}"
+if [ -n "${GITHUB_RUN_NUMBER:-}" ]; then
+  DEB_VERSION="$VERSION-$BUILD_NUM"
+  IPA_VERSION="$VERSION-b$BUILD_NUM"
+else
+  DEB_VERSION="$VERSION"
+  IPA_VERSION="$VERSION"
+fi
 OUT="build"
 APPDIR="$OUT/pkg/Applications/$APP.app"
 DIST="dist"
@@ -40,6 +50,11 @@ echo "==> Assembling bundle"
 cp app/Info.plist "$APPDIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APPDIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APPDIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUM" "$APPDIR/Info.plist"
+# The in-app updater looks for new versions in the repository this build was made in.
+if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :ClaudeMiniUpdateRepo $GITHUB_REPOSITORY" "$APPDIR/Info.plist"
+fi
 cp -R app/Resources/. "$APPDIR/"
 printf 'APPL????' > "$APPDIR/PkgInfo"
 find "$OUT" -name '.DS_Store' -delete
@@ -53,7 +68,7 @@ ldid -Sapp/entitlements-helper.plist "$APPDIR/claudemini-icon"
 echo "==> Packaging .deb"
 mkdir -p "$OUT/pkg/DEBIAN"
 cp deb/DEBIAN/postinst deb/DEBIAN/postrm "$OUT/pkg/DEBIAN/"
-sed "s/@VERSION@/$VERSION/" deb/DEBIAN/control > "$OUT/pkg/DEBIAN/control"
+sed "s/@VERSION@/$DEB_VERSION/" deb/DEBIAN/control > "$OUT/pkg/DEBIAN/control"
 chmod 755 "$OUT/pkg/DEBIAN/postinst" "$OUT/pkg/DEBIAN/postrm"
 find "$OUT/pkg/Applications" -type d -exec chmod 755 {} +
 find "$OUT/pkg/Applications" -type f -exec chmod 644 {} +
@@ -61,12 +76,12 @@ chmod 755 "$APPDIR/$APP"
 chmod 4755 "$APPDIR/claudemini-icon"   # setuid root: lets the app swap its Home Screen icon (owner is root inside the .deb)
 
 export COPYFILE_DISABLE=1
-DEB="$DIST/${BUNDLE_ID}_${VERSION}_iphoneos-arm.deb"
+DEB="$DIST/${BUNDLE_ID}_${DEB_VERSION}_iphoneos-arm.deb"
 dpkg-deb --root-owner-group -Zgzip -b "$OUT/pkg" "$DEB"
 
 echo "==> Done: $DEB"
 dpkg-deb -I "$DEB" | head -n 15
 
 echo "==> Packaging the .ipa (for jailbroken devices with AppSync Unified)"
-bash tools/make_ipa.sh "$APPDIR" "$VERSION" "$DIST"
+bash tools/make_ipa.sh "$APPDIR" "$IPA_VERSION" "$DIST"
 ls -la "$DIST"

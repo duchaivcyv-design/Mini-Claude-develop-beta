@@ -6,6 +6,7 @@
 #import "Theme.h"
 #import "DiagnosticLog.h"
 #import "MiniNavigationController.h"
+#import "UpdateManager.h"
 
 @interface AppDelegate ()
 @property (assign, nonatomic) BOOL showingMain;
@@ -36,6 +37,10 @@
 
     [self applyKeyState];
     [self.window makeKeyAndVisible];
+    // Look for a new version a few seconds after launch (the result only shows as a dot on the cog and in Settings).
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[UpdateManager shared] checkForUpdateForce:NO];
+    });
     return YES;
 }
 

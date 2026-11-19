@@ -26,14 +26,18 @@
 
   function ensureScrollable() {
     try {
-      document.documentElement.style.overflowY = 'auto';
-      document.documentElement.style.touchAction = 'pan-y';
-      document.body.style.overflowY = 'auto';
-      document.body.style.touchAction = 'pan-y';
+      // An empty chat has nothing to scroll: keep the page locked so the greeting card cannot be dragged.
+      var empty = !!document.getElementById('empty');
+      var ov = empty ? 'hidden' : 'auto';
+      var ta = empty ? 'none' : 'pan-y';
+      document.documentElement.style.overflowY = ov;
+      document.documentElement.style.touchAction = ta;
+      document.body.style.overflowY = ov;
+      document.body.style.touchAction = ta;
       document.body.style.webkitOverflowScrolling = 'touch';
       if (msgsEl) {
         msgsEl.style.overflowY = 'visible';
-        msgsEl.style.touchAction = 'pan-y';
+        msgsEl.style.touchAction = ta;
       }
     } catch (e) {}
   }
@@ -128,6 +132,8 @@
     targetEl.classList.remove('msg-expanded');
     targetEl.style.maxHeight = '';
 
+    // Replies are always shown in full, in one piece: there is no "show more" fold any more.
+    return;
     var fullHeight = targetEl.scrollHeight || targetEl.offsetHeight || 0;
     if (fullHeight <= COLLAPSE_HEIGHT + 40) return;
 
@@ -193,7 +199,7 @@
     box.appendChild(el('p', null, S.emptySub));
     msgsEl.appendChild(box);
     jumpEl.className = '';
-    document.documentElement.className = 'is-empty';
+    document.documentElement.classList.add('is-empty');
     ensureScrollable();
     window.scrollTo(0, 0);
     post({ type: 'empty', value: true });
@@ -203,7 +209,7 @@
     var e = document.getElementById('empty');
     if (!e) { return; }
     if (e.parentNode) { e.parentNode.removeChild(e); }
-    document.documentElement.className = '';
+    document.documentElement.classList.remove('is-empty');
     ensureScrollable();
     post({ type: 'empty', value: false });
   }
@@ -361,18 +367,23 @@
 
     clear: function () {
       current = null;
+      window.scrollTo(0, 0);
       showEmpty();
       stick = true;
+      window.scrollTo(0, 0);
+      if (window.requestAnimationFrame) { window.requestAnimationFrame(function () { window.scrollTo(0, 0); }); }
     },
 
     load: function (list) {
       current = null;
-      ensureScrollable();
       msgsEl.innerHTML = '';
       if (!list || !list.length) {
         showEmpty();
         return;
       }
+      document.documentElement.classList.remove('is-empty');
+      ensureScrollable();
+      post({ type: 'empty', value: false });
       for (var i = 0; i < list.length; i++) {
         if (list[i].role === 'user') {
           addUser(list[i].text, list[i].attachments, list[i].index !== undefined ? list[i].index : i);
@@ -474,6 +485,15 @@
       refreshRegenerate();
       stick = true;
       toBottom(true);
+    },
+
+    // The history drawer slides the whole chat sideways: the greeting card fades back a little while it moves.
+    setDrawer: function (open) {
+      document.documentElement.classList.toggle('drawer-open', !!open);
+    },
+
+    scrollTop: function () {
+      window.scrollTo(0, 0);
     },
 
     scrollEnd: function () {

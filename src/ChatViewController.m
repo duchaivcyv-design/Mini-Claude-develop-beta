@@ -21,6 +21,7 @@
 #import "ModelPickerViewController.h"
 #import "ModelPopupViewController.h"
 #import "ConfirmPopupViewController.h"
+#import "UpdateManager.h"
 #import "KeyTier.h"
 #import "OfficeExport.h"
 #import "VoiceChatManager.h"
@@ -96,62 +97,47 @@ static UIImage *DrawCrossIconImage(CGFloat size, UIColor *color) {
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
-static UIImage *DrawNewChatIconImage(CGFloat size, UIColor *color) {
+// A solid cog with eight teeth and a round hole, drawn with code (no emoji, no system symbol) so it looks the same on every iOS version.
+static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0);
-    UIBezierPath *box = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(3, 5, size - 7, size - 8) cornerRadius:4];
-    box.lineWidth = 1.8;
-    box.lineCapStyle = kCGLineCapRound;
-    [color setStroke];
-    [box stroke];
-
-    UIBezierPath *pen = [UIBezierPath bezierPath];
-    [pen moveToPoint:CGPointMake(size * 0.48, size * 0.52)];
-    [pen addLineToPoint:CGPointMake(size - 2.5, 2.5)];
-    pen.lineWidth = 1.8;
-    pen.lineCapStyle = kCGLineCapRound;
-    [pen stroke];
-
+    CGPoint c = CGPointMake(size * 0.5, size * 0.5);
+    CGFloat rOuter = size * 0.47, rInner = size * 0.35, rHole = size * 0.15;
+    NSInteger teeth = 8;
+    CGFloat step = (CGFloat)(2.0 * M_PI) / teeth;
+    UIBezierPath *gear = [UIBezierPath bezierPath];
+    for (NSInteger i = 0; i < teeth; i++) {
+        CGFloat a = i * step - (CGFloat)M_PI_2;
+        CGPoint bl = CGPointMake(c.x + cos(a - 0.27 * step) * rInner, c.y + sin(a - 0.27 * step) * rInner);
+        CGPoint tl = CGPointMake(c.x + cos(a - 0.15 * step) * rOuter, c.y + sin(a - 0.15 * step) * rOuter);
+        CGPoint tr = CGPointMake(c.x + cos(a + 0.15 * step) * rOuter, c.y + sin(a + 0.15 * step) * rOuter);
+        CGPoint br = CGPointMake(c.x + cos(a + 0.27 * step) * rInner, c.y + sin(a + 0.27 * step) * rInner);
+        if (i == 0) [gear moveToPoint:bl]; else [gear addLineToPoint:bl];
+        [gear addLineToPoint:tl];
+        [gear addLineToPoint:tr];
+        [gear addLineToPoint:br];
+        [gear addArcWithCenter:c radius:rInner startAngle:a + 0.27 * step endAngle:a + 0.73 * step clockwise:YES];
+    }
+    [gear closePath];
+    [gear appendPath:[UIBezierPath bezierPathWithArcCenter:c radius:rHole startAngle:0 endAngle:(CGFloat)(M_PI * 2.0) clockwise:YES]];
+    gear.usesEvenOddFillRule = YES;
+    [color setFill];
+    [gear fill];
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
-static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
-    if (@available(iOS 13.0, *)) {
-        UIImage *sys = [UIImage systemImageNamed:@"gearshape"];
-        if (sys) return [sys imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    }
+static UIImage *DrawChevronRightIconImage(CGFloat size, UIColor *color) {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0);
-    CGPoint c = CGPointMake(size * 0.5, size * 0.5);
-    CGFloat rOuter = size * 0.34;
-    CGFloat rInner = size * 0.24;
-    NSInteger teeth = 8;
-    UIBezierPath *gear = [UIBezierPath bezierPath];
-    for (NSInteger i = 0; i < teeth; i++) {
-        CGFloat a0 = (i * 2.0 * M_PI) / teeth;
-        CGFloat a1 = a0 + (M_PI / (teeth * 2.2));
-        CGFloat a2 = a0 + (M_PI / teeth);
-        CGFloat a3 = a2 + (M_PI / (teeth * 2.2));
-        CGPoint p0 = CGPointMake(c.x + cos(a0) * rInner, c.y + sin(a0) * rInner);
-        CGPoint p1 = CGPointMake(c.x + cos(a1) * rOuter, c.y + sin(a1) * rOuter);
-        CGPoint p2 = CGPointMake(c.x + cos(a2) * rOuter, c.y + sin(a2) * rOuter);
-        CGPoint p3 = CGPointMake(c.x + cos(a3) * rInner, c.y + sin(a3) * rInner);
-        if (i == 0) [gear moveToPoint:p0];
-        else [gear addLineToPoint:p0];
-        [gear addLineToPoint:p1];
-        [gear addLineToPoint:p2];
-        [gear addLineToPoint:p3];
-    }
-    [gear closePath];
-    gear.lineWidth = 1.6;
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    [p moveToPoint:CGPointMake(size * 0.38, size * 0.24)];
+    [p addLineToPoint:CGPointMake(size * 0.64, size * 0.5)];
+    [p addLineToPoint:CGPointMake(size * 0.38, size * 0.76)];
+    p.lineWidth = 2.0;
+    p.lineCapStyle = kCGLineCapRound;
+    p.lineJoinStyle = kCGLineJoinRound;
     [color setStroke];
-    [gear stroke];
-
-    UIBezierPath *hole = [UIBezierPath bezierPathWithArcCenter:c radius:size * 0.12 startAngle:0 endAngle:M_PI * 2.0 clockwise:YES];
-    hole.lineWidth = 1.6;
-    [color setStroke];
-    [hole stroke];
-
+    [p stroke];
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
@@ -387,7 +373,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 
 @interface ChatViewController () <WKNavigationDelegate, ScriptMessageTarget, UITextViewDelegate,
                                   UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate,
-                                  PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
+                                  PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate>
 @property (strong, nonatomic) UIView *chatStageView;
 @property (strong, nonatomic) WKWebView *webView;
 @property (assign, nonatomic) BOOL webReady;
@@ -396,8 +382,19 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 // Half-width History Drawer + shifted Chat Stage
 @property (assign, nonatomic) BOOL historyDrawerOpen;
 @property (strong, nonatomic) UIView *historyDrawerView;
-@property (strong, nonatomic) UIButton *historyNewChatButton;
-@property (strong, nonatomic) UISearchBar *historySearchBar;
+@property (strong, nonatomic) UIView *historySearchWrap;
+@property (strong, nonatomic) UIImageView *historySearchIcon;
+@property (strong, nonatomic) UITextField *historySearchField;
+@property (strong, nonatomic) UILabel *historyEmptyLabel;
+@property (strong, nonatomic) UIView *historySettingsBadge;
+@property (strong, nonatomic) UIImageView *historySettingsIcon;
+@property (strong, nonatomic) UILabel *historySettingsLabel;
+@property (strong, nonatomic) UIImageView *historySettingsChevron;
+@property (strong, nonatomic) UIView *historyUpdateDot;
+@property (assign, nonatomic) BOOL historyDrawerAnimating;
+@property (assign, nonatomic) BOOL chatIsEmpty;
+@property (copy, nonatomic) NSString *appliedNativeScaleSig;
+@property (copy, nonatomic) NSString *appliedWebScaleSig;
 @property (strong, nonatomic) UITableView *historyTableView;
 @property (strong, nonatomic) UIButton *historyCloseXButton;
 @property (strong, nonatomic) UIButton *historySettingsButton;
@@ -468,6 +465,8 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     self.view.backgroundColor = [Theme background];
     self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
     self.pendingAttachments = [NSMutableArray array];
+    self.chatIsEmpty = YES;
+    self.view.clipsToBounds = YES;
     self.greetingIndex = arc4random_uniform((uint32_t)kGreetingCount);
 
     self.chatStageView = [[UIView alloc] initWithFrame:self.view.bounds];
@@ -502,6 +501,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     [center addObserver:self selector:@selector(historyCleared:) name:kNotifHistoryCleared object:nil];
     [center addObserver:self selector:@selector(conversationDeleted:) name:kNotifConversationDeleted object:nil];
     [center addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
+    [center addObserver:self selector:@selector(updateStateChanged) name:kNotifUpdateChanged object:nil];
 
     NSMutableSet *keep = [NSMutableSet set];
     for (NSDictionary *entry in [ConversationStore allEntries]) {
@@ -563,7 +563,14 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     return [Theme darkMode] ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
-#pragma mark - Half-Screen History Drawer + Right Chat Stage
+#pragma mark - History Drawer (the whole chat slides to the right; it is never squeezed)
+
+static const CGFloat kDrawerWidthRatio = 0.62;
+
+- (CGFloat)historyDrawerWidth {
+    CGFloat w = self.view.bounds.size.width;
+    return MIN(floor(w * kDrawerWidthRatio), 320.0);
+}
 
 - (void)setupHistoryDrawer {
     self.historyDrawerView = [[UIView alloc] initWithFrame:CGRectZero];
@@ -574,86 +581,185 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     self.historyDrawerView.hidden = YES;
     [self.view addSubview:self.historyDrawerView];
 
-    self.historyNewChatButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    [self.historyNewChatButton setImage:DrawNewChatIconImage(20, [Theme accent]) forState:UIControlStateNormal];
-    [self.historyNewChatButton setTitle:@"  Cuộc trò chuyện mới" forState:UIControlStateNormal];
-    [self.historyNewChatButton setTitleColor:[Theme text] forState:UIControlStateNormal];
-    self.historyNewChatButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    self.historyNewChatButton.tintColor = [Theme accent];
-    self.historyNewChatButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [self.historyNewChatButton addTarget:self action:@selector(historyNewChatTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.historyDrawerView addSubview:self.historyNewChatButton];
+    // Search sits at the top, level with the close button.
+    self.historySearchWrap = [[UIView alloc] initWithFrame:CGRectZero];
+    self.historySearchWrap.backgroundColor = [Theme background];
+    self.historySearchWrap.layer.cornerRadius = 12;
+    self.historySearchWrap.layer.borderWidth = 1.0;
+    self.historySearchWrap.layer.borderColor = [Theme border].CGColor;
+    [self.historyDrawerView addSubview:self.historySearchWrap];
 
-    self.historySearchBar = [[UISearchBar alloc] initWithFrame:CGRectZero];
-    self.historySearchBar.placeholder = @"Tìm kiếm";
-    self.historySearchBar.delegate = self;
-    self.historySearchBar.searchBarStyle = UISearchBarStyleMinimal;
-    [self.historyDrawerView addSubview:self.historySearchBar];
+    self.historySearchIcon = [[UIImageView alloc] initWithImage:[Theme iconSearch]];
+    self.historySearchIcon.contentMode = UIViewContentModeScaleAspectFit;
+    self.historySearchIcon.tintColor = [Theme secondaryText];
+    [self.historySearchWrap addSubview:self.historySearchIcon];
+
+    self.historySearchField = [[UITextField alloc] initWithFrame:CGRectZero];
+    self.historySearchField.font = [UIFont systemFontOfSize:15];
+    self.historySearchField.textColor = [Theme text];
+    self.historySearchField.tintColor = [Theme accent];
+    self.historySearchField.returnKeyType = UIReturnKeySearch;
+    self.historySearchField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    self.historySearchField.autocorrectionType = UITextAutocorrectionTypeNo;
+    self.historySearchField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    self.historySearchField.keyboardAppearance = [Theme keyboardAppearance];
+    self.historySearchField.delegate = self;
+    [self.historySearchField addTarget:self action:@selector(historySearchChanged) forControlEvents:UIControlEventEditingChanged];
+    [self.historySearchWrap addSubview:self.historySearchField];
+    [self refreshHistorySearchPlaceholder];
 
     self.historyTableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     self.historyTableView.backgroundColor = [UIColor clearColor];
     self.historyTableView.separatorColor = [Theme border];
+    self.historyTableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 0);
+    self.historyTableView.tableFooterView = [[UIView alloc] initWithFrame:CGRectZero];
+    self.historyTableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.historyTableView.dataSource = self;
     self.historyTableView.delegate = self;
     [self.historyDrawerView addSubview:self.historyTableView];
+
+    self.historyEmptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.historyEmptyLabel.text = L(@"history_empty");
+    self.historyEmptyLabel.textAlignment = NSTextAlignmentCenter;
+    self.historyEmptyLabel.numberOfLines = 0;
+    self.historyEmptyLabel.font = [UIFont systemFontOfSize:14];
+    self.historyEmptyLabel.textColor = [Theme secondaryText];
+    self.historyEmptyLabel.hidden = YES;
+    [self.historyDrawerView addSubview:self.historyEmptyLabel];
 
     self.historyCloseXButton = [UIButton buttonWithType:UIButtonTypeCustom];
     [self.historyCloseXButton setImage:DrawCrossIconImage(22, [Theme text]) forState:UIControlStateNormal];
     self.historyCloseXButton.tintColor = [Theme text];
     self.historyCloseXButton.backgroundColor = [Theme background];
-    self.historyCloseXButton.layer.cornerRadius = 17;
+    self.historyCloseXButton.layer.cornerRadius = 19;
     self.historyCloseXButton.layer.borderWidth = 1.0;
     self.historyCloseXButton.layer.borderColor = [Theme border].CGColor;
     [self.historyCloseXButton addTarget:self action:@selector(closeHistoryDrawer) forControlEvents:UIControlEventTouchUpInside];
     [self.historyDrawerView addSubview:self.historyCloseXButton];
 
+    // Settings: a full-width row with a coloured badge and a word, so a new user can see it at a glance.
     self.historySettingsButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    [self.historySettingsButton setImage:DrawSettingsGearIconImage(22, [Theme text]) forState:UIControlStateNormal];
-    self.historySettingsButton.tintColor = [Theme text];
     self.historySettingsButton.backgroundColor = [Theme background];
-    self.historySettingsButton.layer.cornerRadius = 18;
+    self.historySettingsButton.layer.cornerRadius = 16;
     self.historySettingsButton.layer.borderWidth = 1.0;
     self.historySettingsButton.layer.borderColor = [Theme border].CGColor;
+    self.historySettingsButton.accessibilityLabel = L(@"settings");
     [self.historySettingsButton addTarget:self action:@selector(historySettingsTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.historySettingsButton addTarget:self action:@selector(historySettingsHighlight) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
+    [self.historySettingsButton addTarget:self action:@selector(historySettingsUnhighlight) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
     [self.historyDrawerView addSubview:self.historySettingsButton];
 
+    self.historySettingsBadge = [[UIView alloc] initWithFrame:CGRectZero];
+    self.historySettingsBadge.userInteractionEnabled = NO;
+    self.historySettingsBadge.backgroundColor = [[Theme accent] colorWithAlphaComponent:0.16];
+    self.historySettingsBadge.layer.cornerRadius = 10;
+    [self.historySettingsButton addSubview:self.historySettingsBadge];
+
+    self.historySettingsIcon = [[UIImageView alloc] initWithImage:DrawSettingsGearIconImage(20, [Theme accent])];
+    self.historySettingsIcon.tintColor = [Theme accent];
+    self.historySettingsIcon.contentMode = UIViewContentModeCenter;
+    [self.historySettingsBadge addSubview:self.historySettingsIcon];
+
+    self.historySettingsLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.historySettingsLabel.userInteractionEnabled = NO;
+    self.historySettingsLabel.text = L(@"settings");
+    self.historySettingsLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    self.historySettingsLabel.textColor = [Theme text];
+    [self.historySettingsButton addSubview:self.historySettingsLabel];
+
+    self.historySettingsChevron = [[UIImageView alloc] initWithImage:DrawChevronRightIconImage(18, [Theme secondaryText])];
+    self.historySettingsChevron.userInteractionEnabled = NO;
+    self.historySettingsChevron.tintColor = [Theme secondaryText];
+    self.historySettingsChevron.contentMode = UIViewContentModeCenter;
+    [self.historySettingsButton addSubview:self.historySettingsChevron];
+
+    // A small dot on the cog when a new version is waiting (found by the update check).
+    self.historyUpdateDot = [[UIView alloc] initWithFrame:CGRectZero];
+    self.historyUpdateDot.userInteractionEnabled = NO;
+    self.historyUpdateDot.backgroundColor = [Theme accent];
+    self.historyUpdateDot.layer.cornerRadius = 6;
+    self.historyUpdateDot.layer.borderWidth = 2;
+    self.historyUpdateDot.layer.borderColor = [Theme background].CGColor;
+    self.historyUpdateDot.hidden = ![UpdateManager shared].updateAvailable;
+    [self.historySettingsBadge addSubview:self.historyUpdateDot];
+
     self.chatRightOverlayButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.chatRightOverlayButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.12];
+    self.chatRightOverlayButton.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.14];
     self.chatRightOverlayButton.hidden = YES;
     [self.chatRightOverlayButton addTarget:self action:@selector(closeHistoryDrawer) forControlEvents:UIControlEventTouchUpInside];
+    UISwipeGestureRecognizer *swipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(closeHistoryDrawer)];
+    swipe.direction = UISwipeGestureRecognizerDirectionLeft;
+    [self.chatRightOverlayButton addGestureRecognizer:swipe];
     [self.chatStageView addSubview:self.chatRightOverlayButton];
+}
+
+- (void)refreshHistorySearchPlaceholder {
+    self.historySearchField.attributedPlaceholder =
+        [[NSAttributedString alloc] initWithString:L(@"search_chip_title")
+                                        attributes:@{ NSForegroundColorAttributeName: [[Theme secondaryText] colorWithAlphaComponent:0.85],
+                                                      NSFontAttributeName: [UIFont systemFontOfSize:15] }];
+}
+
+- (void)updateStateChanged {
+    self.historyUpdateDot.hidden = ![UpdateManager shared].updateAvailable;
+}
+
+- (void)historySettingsHighlight {
+    self.historySettingsButton.backgroundColor = [[Theme accent] colorWithAlphaComponent:0.12];
+}
+
+- (void)historySettingsUnhighlight {
+    self.historySettingsButton.backgroundColor = [Theme background];
 }
 
 - (void)historySettingsTapped {
     [self closeHistoryDrawer];
+    if (self.navigationController.topViewController != self || self.navigationController.transitionCoordinator) return;
     Class settingsVCClass = NSClassFromString(@"SettingsViewController");
-    if (settingsVCClass) {
-        UIViewController *settingsVC = [[settingsVCClass alloc] init];
-        if (self.navigationController) {
-            [self.navigationController pushViewController:settingsVC animated:YES];
-        } else {
-            [self presentViewController:settingsVC animated:YES completion:nil];
-        }
+    if (!settingsVCClass) return;
+    UIViewController *settingsVC = [[settingsVCClass alloc] init];
+    if (self.navigationController) {
+        [self.navigationController pushViewController:settingsVC animated:YES];
+    } else {
+        [self presentViewController:settingsVC animated:YES completion:nil];
     }
+}
+
+- (void)historySearchChanged {
+    [self reloadHistoryItems];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
 }
 
 - (void)reloadHistoryItems {
     NSArray *entries = [ConversationStore allEntries];
     self.historyAllItems = [entries isKindOfClass:[NSArray class]] ? entries : @[];
-    NSString *q = [self.historySearchBar.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *q = [self.historySearchField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
     if (q.length == 0) {
         self.historyFilteredItems = self.historyAllItems;
     } else {
         NSMutableArray *matches = [NSMutableArray array];
         for (NSDictionary *item in self.historyAllItems) {
+            if (![item isKindOfClass:[NSDictionary class]]) continue;
             NSString *title = [item[@"title"] isKindOfClass:[NSString class]] ? item[@"title"] : @"";
-            if ([title rangeOfString:q options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            if ([title rangeOfString:q options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch].location != NSNotFound) {
                 [matches addObject:item];
             }
         }
         self.historyFilteredItems = matches;
     }
+    self.historyEmptyLabel.hidden = self.historyFilteredItems.count > 0;
     [self.historyTableView reloadData];
+}
+
+// Where the chat stage sits: pushed to the right by the drawer width when the drawer is open. Only the position changes, never the size.
+- (CGPoint)chatStageCenterOpen:(BOOL)open {
+    CGFloat w = self.view.bounds.size.width;
+    CGFloat h = self.view.bounds.size.height;
+    return CGPointMake(w / 2.0 + (open ? [self historyDrawerWidth] : 0), h / 2.0);
 }
 
 - (void)historyTapped {
@@ -664,53 +770,56 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     }
     [self reloadHistoryItems];
     self.historyDrawerOpen = YES;
+    self.historyDrawerAnimating = YES;
     self.historyDrawerView.hidden = NO;
     self.chatRightOverlayButton.hidden = NO;
+    self.chatRightOverlayButton.alpha = 0;
     [self.view bringSubviewToFront:self.historyDrawerView];
+    [self callJS:@"setDrawer" args:@[@YES]];
 
-    CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
-    CGFloat drawerW = floor(w * 0.52);
-
-    self.historyDrawerView.frame = CGRectMake(-drawerW, 0, drawerW, h);
-    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-        self.historyDrawerView.frame = CGRectMake(0, 0, drawerW, h);
-        self.chatStageView.frame = CGRectMake(drawerW, 0, w - drawerW, h);
-        [self layoutChatStageSubviews];
+    CGFloat drawerW = [self historyDrawerWidth];
+    if (CGRectGetMaxX(self.historyDrawerView.frame) <= 0 || self.historyDrawerView.frame.size.width != drawerW) {
+        self.historyDrawerView.frame = CGRectMake(-drawerW, 0, drawerW, h);
         [self layoutHistoryDrawerSubviews];
-    } completion:nil];
+    }
+    [UIView animateWithDuration:0.36 delay:0 usingSpringWithDamping:0.95 initialSpringVelocity:0.1
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                     animations:^{
+        self.historyDrawerView.frame = CGRectMake(0, 0, drawerW, h);
+        self.chatStageView.center = [self chatStageCenterOpen:YES];
+        self.chatRightOverlayButton.alpha = 1;
+    } completion:^(BOOL finished) {
+        self.historyDrawerAnimating = NO;
+    }];
 }
 
 - (void)closeHistoryDrawer {
     if (!self.historyDrawerOpen) return;
     [self.view endEditing:YES];
     self.historyDrawerOpen = NO;
-    self.chatRightOverlayButton.hidden = YES;
+    self.historyDrawerAnimating = YES;
+    [self callJS:@"setDrawer" args:@[@NO]];
 
-    CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
-    CGFloat drawerW = floor(w * 0.52);
-
-    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+    CGFloat drawerW = [self historyDrawerWidth];
+    [UIView animateWithDuration:0.30 delay:0 options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
         self.historyDrawerView.frame = CGRectMake(-drawerW, 0, drawerW, h);
-        self.chatStageView.frame = CGRectMake(0, 0, w, h);
-        [self layoutChatStageSubviews];
+        self.chatStageView.center = [self chatStageCenterOpen:NO];
+        self.chatRightOverlayButton.alpha = 0;
     } completion:^(BOOL finished) {
+        if (self.historyDrawerOpen) return;   // opened again while closing
+        self.historyDrawerAnimating = NO;
         self.historyDrawerView.hidden = YES;
+        self.chatRightOverlayButton.hidden = YES;
+        self.chatRightOverlayButton.alpha = 1;
     }];
 }
 
-- (void)historyNewChatTapped {
-    [self closeHistoryDrawer];
-    [self startNewChat];
-}
-
-- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
-    [self reloadHistoryItems];
-}
-
-- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
-    [searchBar resignFirstResponder];
+- (UIViewController *)topPresentedController {
+    UIViewController *top = self;
+    while (top.presentedViewController) top = top.presentedViewController;
+    return top;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -721,22 +830,28 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     static NSString *cellId = @"HistoryHalfCell";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellId];
         cell.backgroundColor = [UIColor clearColor];
-        cell.textLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        cell.detailTextLabel.font = [UIFont systemFontOfSize:11];
-        cell.detailTextLabel.textColor = [Theme secondaryText];
+        cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        cell.textLabel.numberOfLines = 1;
+        UIView *selected = [[UIView alloc] init];
+        selected.backgroundColor = [[Theme accent] colorWithAlphaComponent:0.14];
+        cell.selectedBackgroundView = selected;
     }
-    NSDictionary *item = self.historyFilteredItems[(NSUInteger)indexPath.row];
-    NSString *title = [item[@"title"] isKindOfClass:[NSString class]] && [item[@"title"] length] > 0 ? item[@"title"] : @"Cuộc trò chuyện";
+    NSDictionary *item = indexPath.row < (NSInteger)self.historyFilteredItems.count ? self.historyFilteredItems[(NSUInteger)indexPath.row] : nil;
+    NSString *title = [item[@"title"] isKindOfClass:[NSString class]] && [item[@"title"] length] > 0 ? item[@"title"] : L(@"history_title");
     cell.textLabel.text = title;
     cell.textLabel.textColor = [Theme text];
-    cell.detailTextLabel.text = @"";
     return cell;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    return 48;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.row >= (NSInteger)self.historyFilteredItems.count) return;
     NSDictionary *item = self.historyFilteredItems[(NSUInteger)indexPath.row];
     NSString *cid = item[@"id"];
     [self closeHistoryDrawer];
@@ -748,21 +863,40 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 - (void)layoutHistoryDrawerSubviews {
     CGFloat dw = self.historyDrawerView.bounds.size.width;
     CGFloat dh = self.historyDrawerView.bounds.size.height;
-    CGFloat topPad = 44;
-    CGFloat bottomPad = 16;
+    if (dw < 10) return;
+    CGFloat topPad = 12;
+    CGFloat bottomPad = 12;
     if (@available(iOS 11.0, *)) {
-        topPad = MAX(topPad, self.view.safeAreaInsets.top + 8);
-        bottomPad = MAX(bottomPad, self.view.safeAreaInsets.bottom + 10);
+        topPad += self.view.safeAreaInsets.top;
+        bottomPad += self.view.safeAreaInsets.bottom;
     }
-    CGFloat closeBtnSize = 34;
-    self.historyCloseXButton.frame = CGRectMake(dw - closeBtnSize - 10, topPad, closeBtnSize, closeBtnSize);
-    self.historyNewChatButton.frame = CGRectMake(12, topPad, MAX(40, dw - closeBtnSize - 26), 34);
-    self.historySearchBar.frame = CGRectMake(6, topPad + 38, dw - 12, 42);
+    BOOL keyboardUp = self.keyboardOverlap > 0 && self.historySearchField.isFirstResponder;
 
-    CGFloat settingsBtnSize = 36;
-    CGFloat listBottom = dh - bottomPad - settingsBtnSize - 10;
-    self.historyTableView.frame = CGRectMake(0, topPad + 84, dw, MAX(60, listBottom - (topPad + 84)));
-    self.historySettingsButton.frame = CGRectMake(dw - settingsBtnSize - 12, dh - bottomPad - settingsBtnSize, settingsBtnSize, settingsBtnSize);
+    CGFloat rowH = 38;                       // search pill and close button share one row
+    CGFloat closeSize = rowH;
+    CGFloat sideGap = 12;
+    self.historyCloseXButton.frame = CGRectMake(dw - sideGap - closeSize, topPad, closeSize, closeSize);
+    self.historyCloseXButton.layer.cornerRadius = closeSize / 2.0;
+    self.historySearchWrap.frame = CGRectMake(sideGap, topPad, MAX(60, dw - sideGap * 2 - closeSize - 8), rowH);
+    CGFloat sw = self.historySearchWrap.bounds.size.width;
+    self.historySearchIcon.frame = CGRectMake(10, (rowH - 16) / 2.0, 16, 16);
+    self.historySearchField.frame = CGRectMake(32, 0, MAX(20, sw - 32 - 8), rowH);
+
+    CGFloat settingsH = 52;
+    CGFloat settingsY = dh - bottomPad - settingsH;
+    self.historySettingsButton.hidden = keyboardUp;
+    self.historySettingsButton.frame = CGRectMake(sideGap, settingsY, dw - sideGap * 2, settingsH);
+    CGFloat bw = self.historySettingsButton.bounds.size.width;
+    self.historySettingsBadge.frame = CGRectMake(10, (settingsH - 32) / 2.0, 32, 32);
+    self.historySettingsIcon.frame = self.historySettingsBadge.bounds;
+    self.historyUpdateDot.frame = CGRectMake(32 - 10, -4, 12, 12);
+    self.historySettingsChevron.frame = CGRectMake(bw - 12 - 20, (settingsH - 20) / 2.0, 20, 20);
+    self.historySettingsLabel.frame = CGRectMake(10 + 32 + 10, 0, MAX(20, bw - (10 + 32 + 10) - 36), settingsH);
+
+    CGFloat listTop = topPad + rowH + 10;
+    CGFloat listBottom = keyboardUp ? (dh - self.keyboardOverlap - 8) : (settingsY - 10);
+    self.historyTableView.frame = CGRectMake(0, listTop, dw, MAX(60, listBottom - listTop));
+    self.historyEmptyLabel.frame = CGRectMake(16, listTop + 24, dw - 32, 44);
 }
 
 #pragma mark - Setup
@@ -795,16 +929,37 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     if (@available(iOS 11.0, *)) {
         self.webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     }
+    self.webView.alpha = 0.0;
     [self.chatStageView addSubview:self.webView];
+    // An empty chat cannot be scrolled, so a tap on the page is how the keyboard is put away.
+    UITapGestureRecognizer *dismissTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(webViewTappedToDismissKeyboard)];
+    dismissTap.cancelsTouchesInView = NO;
+    dismissTap.delegate = self;
+    [self.webView addGestureRecognizer:dismissTap];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [weakSelf revealWebView]; });
+}
+
+- (void)webViewTappedToDismissKeyboard {
+    if (self.textView.isFirstResponder) [self.textView resignFirstResponder];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return YES;
 }
 
 - (void)unlockWebViewScrolling {
     if (!self.webView) return;
+    // While the chat is empty the page is pinned (nothing to scroll, no rubber band), so the greeting card stays put.
+    BOOL locked = self.chatIsEmpty;
+    UIScrollView *sv = self.webView.scrollView;
     self.webView.userInteractionEnabled = YES;
-    self.webView.scrollView.userInteractionEnabled = YES;
-    self.webView.scrollView.scrollEnabled = YES;
-    self.webView.scrollView.alwaysBounceVertical = YES;
-    if (self.webReady) {
+    sv.userInteractionEnabled = YES;
+    sv.scrollEnabled = !locked;
+    sv.bounces = !locked;
+    sv.alwaysBounceVertical = !locked;
+    if (locked && sv.contentOffset.y != 0) sv.contentOffset = CGPointZero;
+    if (self.webReady && !locked) {
         [self.webView evaluateJavaScript:
          @"document.documentElement.style.overflowY='auto';"
           "document.body.style.overflowY='auto';"
@@ -909,18 +1064,29 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
-    CGFloat drawerW = self.historyDrawerOpen ? floor(w * 0.52) : 0;
+    CGFloat drawerW = [self historyDrawerWidth];
 
+    // The stage keeps its full size at all times (so the greeting never re-wraps); the drawer only moves it sideways.
+    self.chatStageView.bounds = CGRectMake(0, 0, w, h);
+    if (!self.historyDrawerAnimating) {
+        self.chatStageView.center = [self chatStageCenterOpen:self.historyDrawerOpen];
+    }
     if (self.historyDrawerOpen) {
-        self.historyDrawerView.hidden = NO;
-        self.historyDrawerView.frame = CGRectMake(0, 0, drawerW, h);
+        if (!self.historyDrawerAnimating) {
+            self.historyDrawerView.hidden = NO;
+            self.historyDrawerView.frame = CGRectMake(0, 0, drawerW, h);
+            self.chatRightOverlayButton.hidden = NO;
+        } else {
+            CGRect f = self.historyDrawerView.frame;
+            if (fabs(f.size.height - h) > 0.5 || fabs(f.size.width - drawerW) > 0.5) {
+                f.size = CGSizeMake(drawerW, h);
+                self.historyDrawerView.frame = f;
+            }
+        }
         [self layoutHistoryDrawerSubviews];
-        self.chatStageView.frame = CGRectMake(drawerW, 0, w - drawerW, h);
-        self.chatRightOverlayButton.hidden = NO;
-    } else {
+    } else if (!self.historyDrawerAnimating) {
         self.historyDrawerView.hidden = YES;
-        self.historyDrawerView.frame = CGRectMake(-floor(w * 0.52), 0, floor(w * 0.52), h);
-        self.chatStageView.frame = CGRectMake(0, 0, w, h);
+        self.historyDrawerView.frame = CGRectMake(-drawerW, 0, drawerW, h);
         self.chatRightOverlayButton.hidden = YES;
     }
     [self layoutChatStageSubviews];
@@ -1218,12 +1384,25 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 - (void)animateLayoutForKeyboardNote:(NSNotification *)note {
     NSTimeInterval duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     NSUInteger curve = [note.userInfo[UIKeyboardAnimationCurveUserInfoKey] unsignedIntegerValue];
+    UIScrollView *sv = self.webView.scrollView;
+    CGFloat oldHeight = self.webView.bounds.size.height;
+    CGFloat oldOffset = sv.contentOffset.y;
+    BOOL wasEmpty = self.chatIsEmpty;
     [self.view setNeedsLayout];
     [UIView animateWithDuration:duration
                           delay:0
                         options:(curve << 16) | UIViewAnimationOptionBeginFromCurrentState
-                     animations:^{ [self.view layoutIfNeeded]; }
-                     completion:^(BOOL finished) { [self callJS:@"scrollEnd" args:@[]]; }];
+                     animations:^{
+        [self.view layoutIfNeeded];
+        // The page got shorter (keyboard up) or taller (keyboard down). Move the scroll position by the same amount so the
+        // messages stay where they are relative to the input bar, instead of jumping to the end of the chat.
+        if (!wasEmpty && !self.chatIsEmpty) {
+            CGFloat newHeight = self.webView.bounds.size.height;
+            CGFloat maxOffset = MAX(0, sv.contentSize.height - newHeight);
+            CGFloat target = MIN(MAX(0, oldOffset + (oldHeight - newHeight)), maxOffset);
+            if (fabs(target - sv.contentOffset.y) > 0.5) sv.contentOffset = CGPointMake(0, target);
+        }
+    } completion:nil];
 }
 
 #pragma mark - Alerts
@@ -1262,6 +1441,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 
 - (void)loadWebPage {
     self.webReady = NO;
+    self.appliedWebScaleSig = nil;
     NSString *html = [self resourceText:@"index" ext:@"html"];
     html = [html stringByReplacingOccurrencesOfString:@"{{THEME}}" withString:[Theme webThemeCSS]];
     NSString *css = [[self resourceText:@"vendor" ext:@"css"] stringByAppendingFormat:@"\n%@", [self resourceText:@"chat" ext:@"css"]];
@@ -1283,7 +1463,13 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 
 - (void)callJS:(NSString *)function args:(NSArray *)args {
     if (!self.webReady) return;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:args options:0 error:nil];
+    NSData *data = nil;
+    @try {
+        data = [NSJSONSerialization dataWithJSONObject:args options:0 error:nil];
+    } @catch (NSException *exception) {   // dataWithJSONObject: throws (not returns an error) on invalid values
+        [DiagnosticLog log:@"callJS %@ skipped: %@", function, exception.reason];
+        return;
+    }
     if (!data) return;
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     json = [json stringByReplacingOccurrencesOfString:@"\u2028" withString:@"\\u2028"];
@@ -1331,15 +1517,26 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     if (self.historyDrawerView) {
         self.historyDrawerView.backgroundColor = [Theme surface];
         self.historyDrawerView.layer.borderColor = [Theme border].CGColor;
-        [self.historyNewChatButton setTitleColor:[Theme text] forState:UIControlStateNormal];
-        self.historyNewChatButton.tintColor = [Theme accent];
+        self.historySearchWrap.backgroundColor = [Theme background];
+        self.historySearchWrap.layer.borderColor = [Theme border].CGColor;
+        self.historySearchIcon.tintColor = [Theme secondaryText];
+        self.historySearchField.textColor = [Theme text];
+        self.historySearchField.tintColor = [Theme accent];
+        self.historySearchField.keyboardAppearance = [Theme keyboardAppearance];
+        [self refreshHistorySearchPlaceholder];
         self.historyTableView.separatorColor = [Theme border];
+        self.historyEmptyLabel.textColor = [Theme secondaryText];
         self.historyCloseXButton.tintColor = [Theme text];
         self.historyCloseXButton.backgroundColor = [Theme background];
         self.historyCloseXButton.layer.borderColor = [Theme border].CGColor;
-        self.historySettingsButton.tintColor = [Theme text];
         self.historySettingsButton.backgroundColor = [Theme background];
         self.historySettingsButton.layer.borderColor = [Theme border].CGColor;
+        self.historySettingsBadge.backgroundColor = [[Theme accent] colorWithAlphaComponent:0.16];
+        self.historySettingsIcon.tintColor = [Theme accent];
+        self.historySettingsLabel.textColor = [Theme text];
+        self.historySettingsChevron.tintColor = [Theme secondaryText];
+        self.historyUpdateDot.backgroundColor = [Theme accent];
+        self.historyUpdateDot.layer.borderColor = [Theme background].CGColor;
         [self.historyTableView reloadData];
     }
 
@@ -1475,6 +1672,14 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     [self unlockWebViewScrolling];
 }
 
+// The page stays invisible until it has drawn once, so the greeting fades in instead of popping in half-built.
+- (void)revealWebView {
+    if (self.webView.alpha >= 1.0) return;
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction animations:^{
+        self.webView.alpha = 1.0;
+    } completion:nil];
+}
+
 - (void)handleScriptMessage:(WKScriptMessage *)message {
     if (![message.body isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *body = message.body;
@@ -1482,12 +1687,18 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     if ([type isEqualToString:@"ready"]) {
         [DiagnosticLog log:@"chat page ready"];
         self.webReady = YES;
+        [self revealWebView];
         [self pushThemeToWeb];
         [self applyUIScaleToNativeAndWeb];
         [self pushStrings];
         [self renderConversation];
         [self updateSendButton];
         [self unlockWebViewScrolling];
+    } else if ([type isEqualToString:@"empty"]) {
+        self.chatIsEmpty = [body[@"value"] boolValue];
+        if (self.chatIsEmpty) [self resetWebScrollToTop];
+        [self unlockWebViewScrolling];
+        if (self.chatIsEmpty) [self reassertEmptyLockSoon];
     } else if ([type isEqualToString:@"copy"]) {
         NSString *text = body[@"text"];
         if ([text isKindOfClass:[NSString class]]) [UIPasteboard generalPasteboard].string = text;
@@ -1603,6 +1814,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
     [DiagnosticLog log:@"web content process was terminated by iOS (probably memory): reloading the page"];
+    self.shownGreeting = nil;
     [self loadWebPage];
 }
 
@@ -1731,8 +1943,20 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 #pragma mark - Navigation buttons
 
 - (void)newChatTapped {
+    [self.view endEditing:YES];
     [self closeHistoryDrawer];
-    [self startNewChat];
+    if ([self topPresentedController] != self) return;   // a pop-up is already on screen
+    BOOL hasContent = [self.conversation[@"messages"] count] > 0 || self.pendingAttachments.count > 0;
+    if (!hasContent) {   // already a fresh chat: nothing to confirm
+        [self startNewChat];
+        return;
+    }
+    ConfirmPopupViewController *popup = [[ConfirmPopupViewController alloc] initWithTitle:L(@"new_chat_title")
+                                                                                   message:L(@"new_chat_msg")
+                                                                              confirmTitle:L(@"new_chat_confirm")];
+    __weak typeof(self) weakSelf = self;
+    popup.onConfirm = ^{ [weakSelf startNewChat]; };
+    [self presentViewController:popup animated:YES completion:nil];
 }
 
 - (void)historyCleared:(NSNotification *)note {
@@ -1759,9 +1983,31 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     self.conversation = [ConversationStore newConversationWithModel:self.model];
     [self rerollGreeting];
     [self pushStrings];
+    [self resetWebScrollToTop];   // while the old (tall) chat is still there, so no stale offset survives the page shrinking
+    self.chatIsEmpty = YES;
     [self callJS:@"clear" args:@[]];
     [self updateSendButton];
     [self unlockWebViewScrolling];
+    [self reassertEmptyLockSoon];
+}
+
+// The page scroll position is native state too (UIScrollView). If it is left at, say, 3000 pt when the page becomes one
+// screen tall, the greeting is drawn half cut off until the user pulls the page. Always bring it back to 0 explicitly.
+- (void)resetWebScrollToTop {
+    UIScrollView *sv = self.webView.scrollView;
+    if (sv.contentOffset.y != 0 || sv.contentOffset.x != 0) [sv setContentOffset:CGPointZero animated:NO];
+    [self callJS:@"scrollTop" args:@[]];
+}
+
+- (void)reassertEmptyLockSoon {
+    __weak typeof(self) weakSelf = self;
+    for (NSNumber *delay in @[@0.05, @0.2, @0.5]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            ChatViewController *me = weakSelf;
+            if (!me || !me.chatIsEmpty) return;
+            [me unlockWebViewScrolling];
+        });
+    }
 }
 
 - (void)openConversationWithId:(NSString *)cid {
@@ -1835,13 +2081,20 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 }
 
 - (void)applyUIScaleToNativeAndWeb {
+    // Called on every appearance of the chat: do the work only when the size or the font really changed,
+    // otherwise returning from Settings would restyle the page (and flash the greeting) for nothing.
     CGFloat sc = [AppSettings uiScale];
-    self.textView.font = [UIFont systemFontOfSize:17.0 * sc];
-    self.placeholderLabel.font = [UIFont systemFontOfSize:17.0 * sc];
-    [self.view setNeedsLayout];
-    [self.view layoutIfNeeded];
+    NSString *sig = [NSString stringWithFormat:@"%.3f|%ld", sc, (long)[AppSettings fontStyle]];
+    if (![sig isEqualToString:self.appliedNativeScaleSig]) {
+        self.appliedNativeScaleSig = sig;
+        self.textView.font = [UIFont systemFontOfSize:17.0 * sc];
+        self.placeholderLabel.font = [UIFont systemFontOfSize:17.0 * sc];
+        [self.view setNeedsLayout];
+    }
 
     if (!self.webReady || !self.webView) return;
+    if ([sig isEqualToString:self.appliedWebScaleSig]) return;
+    self.appliedWebScaleSig = sig;
     NSData *fontData = [NSJSONSerialization dataWithJSONObject:@[[self serifCSSValue]] options:0 error:nil];
     NSString *fontJSON = fontData ? [[NSString alloc] initWithData:fontData encoding:NSUTF8StringEncoding] : @"[\"Georgia, serif\"]";
     NSData *cssData = [NSJSONSerialization dataWithJSONObject:@[[self scaleCSSRuleForScale:sc]] options:0 error:nil];
@@ -2485,7 +2738,7 @@ didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> 
     if (!self.webReady || self.importsInFlight > 0) return;
 
     NSString *lowerText = text.lowercaseString;
-    if ([lowerText hasPrefix:@"/tạo ảnh"]) {
+    if ([lowerText hasPrefix:@"/tạo ảnh"] && text.length >= [@"/tạo ảnh" length]) {
         NSString *imagePrompt = [[text substringFromIndex:([@"/tạo ảnh" length])] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (imagePrompt.length == 0) { [self showAlertMessage:@"Hãy nhập mô tả ảnh sau lệnh /tạo ảnh."]; return; }
         if (![KeyStore hasKeyForProvider:AIProviderGemini]) {

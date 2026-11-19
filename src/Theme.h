@@ -84,6 +84,7 @@ typedef NS_ENUM(NSInteger, ThemeSkin) {
 + (NSString *)iconNameForSkin:(ThemeSkin)skin;       // key in CFBundleAlternateIcons; nil for the default icon
 + (UIImage *)iconPreviewForSkin:(ThemeSkin)skin;
 + (NSString *)iconDisplayNameForSkin:(ThemeSkin)skin;   // "SideStore", "LiveContainer"... (no "Skin"); "Mặc định" for the default icon
++ (UIImage *)activeIconImage;                         // picture of the icon in use (the logo for the default icon)
 + (ThemeSkin)activeIconSkin;                          // the icon that is on the Home Screen now (ThemeSkinClaude = default)
 + (BOOL)respringWithHelper;                           // rootful .deb only: asks the root helper to restart SpringBoard
 + (NSString *)currentIconName;                       // nil = default icon (system alternate-icon API)

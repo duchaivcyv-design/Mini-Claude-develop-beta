@@ -5,4 +5,17 @@ chmod 755 /Applications/ClaudeMini.app/ClaudeMini 2>/dev/null
 chown root:wheel /Applications/ClaudeMini.app/claudemini-icon 2>/dev/null
 chmod 4755 /Applications/ClaudeMini.app/claudemini-icon 2>/dev/null
 uicache >/dev/null 2>&1 || true
+# Updated from inside the app: the app leaves a marker (younger than 30 minutes) so it is opened again after the install.
+MARK=/var/mobile/Library/Caches/ClaudeMiniUpdate/relaunch
+if [ -f "$MARK" ]; then
+  if [ -n "$(find "$MARK" -mmin -30 2>/dev/null)" ]; then
+    (
+      sleep 3
+      if [ -x /usr/bin/uiopen ]; then /usr/bin/uiopen --bundleid com.puc.claudemini
+      elif [ -x /usr/bin/open ]; then /usr/bin/open com.puc.claudemini
+      fi
+    ) </dev/null >/dev/null 2>&1 &
+  fi
+  rm -f "$MARK" 2>/dev/null
+fi
 exit 0

@@ -52,9 +52,9 @@ typedef NS_ENUM(NSInteger, StatusKind) {
     [self.scrollView addGestureRecognizer:tap];
 
     // Logo
-    self.logoView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"logo.png"]];
+    self.logoView = [[UIImageView alloc] initWithImage:[Theme activeIconImage]];
     self.logoView.contentMode = UIViewContentModeScaleAspectFill;
-    self.logoView.layer.cornerRadius = 20;
+    self.logoView.layer.cornerRadius = 88 * 0.2237;   // same corner shape as the Home Screen icon
     self.logoView.clipsToBounds = YES;
     [self.scrollView addSubview:self.logoView];
 
@@ -166,6 +166,12 @@ typedef NS_ENUM(NSInteger, StatusKind) {
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    UIImage *icon = [Theme activeIconImage];   // the icon may have been changed in Settings meanwhile
+    if (icon && icon != self.logoView.image) self.logoView.image = icon;
 }
 
 - (UIStatusBarStyle)preferredStatusBarStyle {

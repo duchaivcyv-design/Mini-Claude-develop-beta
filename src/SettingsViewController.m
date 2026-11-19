@@ -10,6 +10,8 @@
 #import "AppearanceViewController.h"
 #import "KeyTier.h"
 #import "ModelStore.h"
+#import "UpdateManager.h"
+#import "UpdatePopupViewController.h"
 
 #pragma mark - Font / Message Preview Screen
 
@@ -237,7 +239,8 @@
 
 // Order on screen: appearance & language on top, then the API keys, then the AI settings, then data & info, then credits.
 typedef NS_ENUM(NSInteger, SettingsSection) {
-    SettingsSectionLook = 0,
+    SettingsSectionUpdate = 0,
+    SettingsSectionLook,
     SettingsSectionKeys,
     SettingsSectionAssistant,
     SettingsSectionData,
@@ -268,6 +271,28 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotifThemeChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleUIScaleChanged) name:@"UIScaleDidChangeNotification" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateStateChanged) name:kNotifUpdateChanged object:nil];
+}
+
+#pragma mark - App update
+
+// The update row follows the checker (checking -> up to date / new version / downloading ...).
+- (void)updateStateChanged {
+    if (!self.isViewLoaded || !self.view.window) return;
+    NSIndexPath *path = [NSIndexPath indexPathForRow:0 inSection:SettingsSectionUpdate];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    if (cell) [self.tableView reloadRowsAtIndexPaths:@[path] withRowAnimation:UITableViewRowAnimationNone];
+    if ([UpdateManager shared].state == UpdateStateAvailable && self.view.window && !self.presentedViewController &&
+        self.navigationController.topViewController == self && [[UpdateManager shared] consumePromptForCurrentVersion]) {
+        [self presentUpdatePopupChecking:NO];   // a new version was just found: tell the user once
+    }
+}
+
+- (void)presentUpdatePopupChecking:(BOOL)check {
+    if (self.presentedViewController) return;
+    UpdateManager *m = [UpdateManager shared];
+    if (check && (m.state == UpdateStateIdle || m.state == UpdateStateFailed || m.state == UpdateStateUpToDate)) [m checkForUpdateForce:YES];
+    [self presentViewController:[[UpdatePopupViewController alloc] init] animated:YES completion:nil];
 }
 
 - (void)dealloc {
@@ -290,6 +315,14 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     // The table was just built in viewDidLoad: only refresh when coming BACK from a sub-screen (keys / prompt may have changed).
     if (self.hasAppearedOnce) [self.tableView reloadData];
     self.hasAppearedOnce = YES;
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [[UpdateManager shared] checkForUpdateForce:NO];   // quietly, at most every 10 minutes
+    if ([UpdateManager shared].state == UpdateStateAvailable && !self.presentedViewController && [[UpdateManager shared] consumePromptForCurrentVersion]) {
+        [self presentUpdatePopupChecking:NO];
+    }
 }
 
 #pragma mark - Helpers
@@ -326,6 +359,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == SettingsSectionUpdate) return 1;
     if (section == SettingsSectionLook) return 3;      // look, language, font size
     if (section == SettingsSectionKeys) return 3;      // Gemini key, Claude key, kind of Gemini key
     if (section == SettingsSectionAssistant) return 4;
@@ -335,6 +369,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     switch (section) {
+        case SettingsSectionUpdate:    return L(@"settings_header_update");
         case SettingsSectionLook:      return L(@"settings_header_look");
         case SettingsSectionKeys:      return L(@"settings_header_keys");
         case SettingsSectionAssistant: return L(@"settings_header_ai");
@@ -344,6 +379,7 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section == SettingsSectionUpdate) return [NSString stringWithFormat:L(@"update_footer"), [UpdateManager shared].installKindName];
     if (section == SettingsSectionKeys) return [NSString stringWithFormat:@"%@\n\n%@", L(@"keys_footer"), L(@"key_tier_footer")];
     if (section == SettingsSectionAssistant) return L(@"attach_memory_footer");
     if (section == SettingsSectionData) return L(@"privacy_footer");
@@ -359,6 +395,29 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
     cell.detailTextLabel.textColor = [Theme secondaryText];
 
     switch (indexPath.section) {
+        case SettingsSectionUpdate: {
+            UpdateManager *m = [UpdateManager shared];
+            cell.textLabel.text = L(@"update_row_title");
+            cell.detailTextLabel.textColor = [Theme secondaryText];
+            NSString *current = [NSString stringWithFormat:@"%@", m.currentVersion];
+            switch (m.state) {
+                case UpdateStateChecking:    cell.detailTextLabel.text = L(@"update_row_checking"); break;
+                case UpdateStateUpToDate:    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ \u00B7 %@", current, L(@"update_row_latest")]; break;
+                case UpdateStateAvailable:
+                    cell.detailTextLabel.text = [NSString stringWithFormat:L(@"update_row_new"), m.latestLabel];
+                    cell.detailTextLabel.textColor = [Theme accent];
+                    break;
+                case UpdateStateDownloading: cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ %d%%", L(@"update_row_downloading"), (int)lround(m.progress * 100.0)]; cell.detailTextLabel.textColor = [Theme accent]; break;
+                case UpdateStateDownloaded:
+                    cell.detailTextLabel.text = [NSString stringWithFormat:L(@"update_row_ready"), m.latestLabel];
+                    cell.detailTextLabel.textColor = [Theme accent];
+                    break;
+                case UpdateStateFailed:      cell.detailTextLabel.text = L(@"update_row_error"); break;
+                default:                     cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ \u00B7 %@", current, L(@"update_row_check")]; break;
+            }
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
         case SettingsSectionCredits:
             cell.textLabel.text = indexPath.row == 0 ? @"TaoJB" : @"PucSaur";
             cell.detailTextLabel.text = L(@"main_developer");
@@ -436,6 +495,9 @@ typedef NS_ENUM(NSInteger, SettingsSection) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     switch (indexPath.section) {
+        case SettingsSectionUpdate:
+            [self presentUpdatePopupChecking:YES];
+            break;
         case SettingsSectionCredits:
             break;
         case SettingsSectionKeys: {

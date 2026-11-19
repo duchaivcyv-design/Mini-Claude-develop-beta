@@ -236,9 +236,18 @@ body {
   box-sizing: border-box;
   text-align: center;
   -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  -webkit-transition: opacity .28s ease, -webkit-transform .32s cubic-bezier(.2,.8,.2,1);
+  transition: opacity .28s ease, transform .32s cubic-bezier(.2,.8,.2,1);
+  -webkit-animation: emptyIn .38s ease-out backwards;
+  animation: emptyIn .38s ease-out backwards;
 }
+/* The history drawer slides the whole chat sideways; the greeting card shrinks back a little while it moves. */
+html.drawer-open .empty { opacity: .5; -webkit-transform: scale(.94) translateZ(0); transform: scale(.94) translateZ(0); }
+@-webkit-keyframes emptyIn { from { opacity: 0; -webkit-transform: translateY(10px) scale(.97); } to { opacity: 1; -webkit-transform: none; } }
+@keyframes emptyIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
 /* Nothing to scroll in an empty chat: pin the page so it cannot be dragged up or down. */
-html.is-empty, html.is-empty body { overflow: hidden; height: 100%; }
+html.is-empty, html.is-empty body { overflow: hidden; height: 100%; overscroll-behavior: none; }
 .empty .logo {
   width: 72px;
   height: 72px;
