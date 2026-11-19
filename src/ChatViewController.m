@@ -942,7 +942,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     CGFloat leftPad = 40;
     CGFloat rightPad = 84;
     CGFloat textWidth = MAX(40, boxWidth - leftPad - rightPad);
-    CGFloat minInputHeight = MAX(38.0, 38.0 * scale);
+    CGFloat minInputHeight = 38.0;
     CGFloat fit = [self.textView sizeThatFits:CGSizeMake(textWidth, CGFLOAT_MAX)].height;
     CGFloat textHeight = MIN(MAX(fit, minInputHeight), kMaxInputHeight);
     self.textView.scrollEnabled = fit > kMaxInputHeight;
@@ -965,17 +965,16 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     self.mentionButton.frame = CGRectMake(toolWidth * 3, 0, toolWidth, kToolsRowHeight);
     self.inputBox.frame = CGRectMake(12, boxY, boxWidth, boxHeight);
 
-    CGFloat textBottom = searchRowHeight + 4 + textHeight;
-    CGFloat lineSlot = MIN(textHeight, 40.0 * scale);
-    CGFloat buttonY = round((textBottom - lineSlot / 2.0 - 18.0) * 2.0) / 2.0;
-    self.attachButton.frame = CGRectMake(5, buttonY, 36, 36);
+    CGFloat centerY = round((boxHeight - 36.0) * 0.5);
+    self.attachButton.frame = CGRectMake(5, centerY, 36, 36);
     self.searchChipButton.hidden = !searchActive;
     if (searchActive) self.searchChipButton.frame = CGRectMake(46, 5, 94, 22);
     self.textView.frame = CGRectMake(leftPad, searchRowHeight + 4, textWidth, textHeight);
-    self.placeholderLabel.frame = CGRectMake(leftPad + 11, searchRowHeight + 4 + (lineSlot - 20.0 * scale) / 2.0, textWidth - 12, 22.0 * scale);
+    CGFloat phHeight = MIN(textHeight, 22.0 * scale);
+    self.placeholderLabel.frame = CGRectMake(leftPad + 11, searchRowHeight + 4 + (textHeight - phHeight) * 0.5, textWidth - 12, phHeight);
     self.sendButton.transform = CGAffineTransformIdentity;
-    self.sendButton.frame = CGRectMake(boxWidth - 36 - 5, buttonY, 36, 36);
-    self.micButton.frame = CGRectMake(boxWidth - 36 - 5 - 40, buttonY, 36, 36);
+    self.sendButton.frame = CGRectMake(boxWidth - 36 - 5, centerY, 36, 36);
+    self.micButton.frame = CGRectMake(boxWidth - 36 - 5 - 40, centerY, 36, 36);
     [self updateToolButtons];
 
     self.webView.frame = CGRectMake(0, 0, width, CGRectGetMinY(self.inputBar.frame));
@@ -1252,13 +1251,12 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
 
 - (NSString *)scaleCSSRuleForScale:(CGFloat)scale {
     CGFloat clamped = MIN(1.4, MAX(0.7, scale));
-    CGFloat bubbleMaxW = MIN(96.0, MAX(58.0, 78.0 * clamped));
+    CGFloat bubbleMaxW = MIN(96.0, MAX(60.0, 80.0 * clamped));
     return [NSString stringWithFormat:
             @":root{--uiscale:%.3f;}"
-             "html{font-size:calc(100%% * var(--uiscale));}"
-             "body,.msg,.msg-text,.msg-content,.empty,pre,code,table,blockquote{font-size:calc(1em * var(--uiscale));}"
-             ".msg,.bubble,.message,.msg-bubble{max-width:%.1f%% !important;padding:calc(10px * var(--uiscale)) calc(14px * var(--uiscale)) !important;border-radius:calc(14px * var(--uiscale)) !important;}"
-             ".msg+.msg,.bubble+.bubble{margin-top:calc(10px * var(--uiscale)) !important;}",
+             "html{font-size:calc(16px * var(--uiscale)) !important;}"
+             "body,#chat,.chat,.messages,#messages,.msg,.msg-row,.msg-wrap,.msg-text,.msg-content,.markdown,.markdown-body,pre,code,table,blockquote,p,li{font-size:calc(16px * var(--uiscale)) !important;line-height:1.45 !important;}"
+             ".msg,.bubble,.message,.msg-bubble{max-width:%.1f%% !important;padding:calc(10px * var(--uiscale)) calc(14px * var(--uiscale)) !important;border-radius:calc(14px * var(--uiscale)) !important;}",
             clamped, bubbleMaxW];
 }
 
@@ -1825,7 +1823,7 @@ static UIImage *DrawSettingsGearIconImage(CGFloat size, UIColor *color) {
     self.attachButton.enabled = !self.streaming;
     self.attachButton.alpha = self.streaming ? 0.4 : 1.0;
     if (self.lastWasStreaming && !self.streaming) {
-        if (self.activeFullScreenVoice || [AppSettings voiceAutoPlayEnabled]) {
+        if (self.activeFullScreenVoice) {
             [self speakLastAssistantMessage];
         }
     }
