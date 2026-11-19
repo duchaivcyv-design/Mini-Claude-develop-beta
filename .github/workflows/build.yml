@@ -1,4 +1,4 @@
-Đổi máy macoios thành unbututu name: "Build IPA & DEB"
+name: "Build IPA & DEB"
 
 on:
   push:
