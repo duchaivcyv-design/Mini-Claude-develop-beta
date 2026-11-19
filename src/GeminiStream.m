@@ -11,11 +11,13 @@
 @property (strong, nonatomic) NSURLSession *session;
 @property (strong, nonatomic) NSURLSessionDataTask *task;
 @property (strong, nonatomic) NSMutableData *buffer;
+@property (assign, nonatomic) NSUInteger bufferReadOffset;
 @property (strong, nonatomic) NSMutableData *errorBody;
 @property (assign, nonatomic) NSInteger status;
 @property (assign, nonatomic) BOOL cancelled;
 @property (assign, nonatomic) BOOL finished;
 @property (assign, nonatomic) BOOL gotText;
+@property (assign, nonatomic) BOOL hitMaxTokens;
 @property (copy, nonatomic) NSString *blockReason;
 @property (assign, nonatomic) NSInteger inStreamErrorStatus;
 @property (copy, nonatomic) NSString *inStreamErrorMessage;
@@ -36,7 +38,8 @@
         _model = [model copy];
         _turns = [turns copy];
         _system = [system copy];
-        _buffer = [NSMutableData data];
+        _buffer = [NSMutableData dataWithCapacity:65536];
+        _bufferReadOffset = 0;
         _errorBody = [NSMutableData data];
         _useStreaming = YES;
         _useFastSpeed = NO;
@@ -48,49 +51,80 @@
 #pragma mark - Request format
 
 + (NSArray *)contentsFromTurns:(NSArray *)turns {
-    NSMutableArray *contents = [NSMutableArray array];
+    NSMutableArray *contents = [NSMutableArray arrayWithCapacity:turns.count];
     for (NSDictionary *turn in turns) {
-        NSMutableArray *parts = [NSMutableArray array];
-        for (NSDictionary *part in turn[@"parts"]) {
+        if (![turn isKindOfClass:[NSDictionary class]]) continue;
+        NSArray *rawParts = [turn[@"parts"] isKindOfClass:[NSArray class]] ? turn[@"parts"] : @[];
+        NSMutableArray *parts = [NSMutableArray arrayWithCapacity:rawParts.count];
+        for (NSDictionary *part in rawParts) {
+            if (![part isKindOfClass:[NSDictionary class]]) continue;
             NSString *type = part[@"type"];
-            if ([type isEqualToString:@"text"] && [part[@"text"] length] > 0) {
+            if ([type isEqualToString:@"text"] && [part[@"text"] isKindOfClass:[NSString class]] && [part[@"text"] length] > 0) {
                 [parts addObject:@{ @"text": part[@"text"] }];
-            } else if ([type isEqualToString:@"image"] && [part[@"data"] length] > 0) {
+            } else if ([type isEqualToString:@"image"] && [part[@"data"] isKindOfClass:[NSString class]] && [part[@"data"] length] > 0) {
                 [parts addObject:@{ @"inline_data": @{ @"mime_type": part[@"mime"] ?: @"image/jpeg", @"data": part[@"data"] } }];
-            } else if ([type isEqualToString:@"pdf"] && [part[@"data"] length] > 0) {
+            } else if ([type isEqualToString:@"pdf"] && [part[@"data"] isKindOfClass:[NSString class]] && [part[@"data"] length] > 0) {
                 [parts addObject:@{ @"inline_data": @{ @"mime_type": @"application/pdf", @"data": part[@"data"] } }];
             }
         }
         if (parts.count == 0) continue;
-        [contents addObject:@{ @"role": [turn[@"role"] isEqualToString:@"assistant"] ? @"model" : @"user", @"parts": parts }];
+        NSString *role = [turn[@"role"] isEqualToString:@"assistant"] ? @"model" : @"user";
+        [contents addObject:@{ @"role": role, @"parts": parts }];
     }
     return contents;
 }
 
 #pragma mark - Control
 
-- (void)start {
-    self.sameKeyRetryCount = 0;
+- (NSTimeInterval)effectiveTimeout {
+    if (self.useFastSpeed) {
+        return self.useStreaming ? 75.0 : 105.0;
+    }
+    return self.useStreaming ? 180.0 : 240.0;
+}
+
+- (NSMutableURLRequest *)buildRequestWithBody:(NSData *)body {
     NSString *escapedModel = [self.model stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
     NSString *method = self.useStreaming ? @"streamGenerateContent?alt=sse" : @"generateContent";
     NSString *urlString = [NSString stringWithFormat:
         @"https://generativelanguage.googleapis.com/v1beta/models/%@:%@", escapedModel, method];
 
+    NSTimeInterval timeout = [self effectiveTimeout];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]
+                                                           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                                       timeoutInterval:timeout];
+    request.HTTPMethod = @"POST";
+    request.HTTPBody = body;
+    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [request setValue:self.useStreaming ? @"text/event-stream" : @"application/json" forHTTPHeaderField:@"Accept"];
+    if (self.useStreaming) {
+        [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
+    }
+    [request setValue:self.key forHTTPHeaderField:@"x-goog-api-key"];
+    return request;
+}
+
+- (void)start {
+    self.sameKeyRetryCount = 0;
+
     NSInteger requestedOutputTokens = [AppSettings maxOutputTokens];
     NSInteger modelCap = [ModelStore maxOutputTokensForModelId:self.model provider:AIProviderGemini];
     if (modelCap <= 0) modelCap = 8192;
-    NSInteger outputCeiling = requestedOutputTokens > 0 ? MIN(requestedOutputTokens, modelCap) : modelCap;
-    NSString *lowerModel = self.model.lowercaseString;
     AIReasoningLevel reasoning = [AppSettings reasoningLevel];
+
+    // Ép trần output cao hơn khi bật suy luận sâu/MAX để không bị cụt giữa chừng
+    NSInteger effectiveRequest = requestedOutputTokens;
+    if (!self.useFastSpeed && reasoning >= AIReasoningLevelHigh) {
+        effectiveRequest = MAX(requestedOutputTokens, MIN(modelCap, 65536));
+    }
+    NSInteger outputCeiling = effectiveRequest > 0 ? MIN(effectiveRequest, modelCap) : modelCap;
+    NSString *lowerModel = self.model.lowercaseString;
 
     NSMutableDictionary *generationConfig = [NSMutableDictionary dictionary];
     BOOL supportsThinking = [lowerModel containsString:@"gemini-2.5"] ||
                             [lowerModel containsString:@"gemini-3"] ||
                             [lowerModel containsString:@"gemini-4"];
-    NSInteger answerReserve = supportsThinking
-        ? MIN(outputCeiling, MAX(1024, (outputCeiling * 2) / 3))
-        : outputCeiling;
-    NSInteger availableThinking = supportsThinking ? MAX(0, outputCeiling - answerReserve) : 0;
+    NSInteger maxThinkingAllowed = supportsThinking ? MAX(0, outputCeiling - 512) : 0;
 
     if ([lowerModel containsString:@"gemini-4"]) {
         NSArray *levels = self.useFastSpeed
@@ -109,9 +143,9 @@
             : @[@0, @1024, @4096, @16384, @24576];
         NSInteger desiredBudget = [budgets[(NSUInteger)reasoning] integerValue];
         if (self.useFastSpeed) {
-            desiredBudget = desiredBudget / 2;
+            desiredBudget = desiredBudget / 4;
         }
-        NSInteger thinkingBudget = MIN(desiredBudget, availableThinking);
+        NSInteger thinkingBudget = MIN(desiredBudget, maxThinkingAllowed);
         if (proModel && thinkingBudget > 0 && thinkingBudget < 128) thinkingBudget = 0;
         if (!proModel || thinkingBudget >= 128) {
             generationConfig[@"thinkingConfig"] = @{ @"thinkingBudget": @(thinkingBudget) };
@@ -120,34 +154,45 @@
 
     generationConfig[@"maxOutputTokens"] = @(MAX(1, outputCeiling));
     if (self.useFastSpeed) {
-        generationConfig[@"temperature"] = @0.4;
+        generationConfig[@"temperature"] = @0.35;
+    } else if (reasoning >= AIReasoningLevelVeryHigh) {
+        generationConfig[@"temperature"] = @0.7;
     }
 
-    if ([lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"]) {
+    BOOL imageGenerationModel = [lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"];
+    if (imageGenerationModel) {
         generationConfig[@"responseModalities"] = @[@"TEXT", @"IMAGE"];
     }
-    BOOL imageGenerationModel = [lowerModel containsString:@"image"] || [lowerModel containsString:@"nano-banana"];
+
     NSMutableDictionary *payload = [@{ @"contents": [GeminiStream contentsFromTurns:self.turns],
                                        @"generationConfig": generationConfig } mutableCopy];
-    if (self.system.length > 0) payload[@"systemInstruction"] = @{ @"parts": @[ @{ @"text": self.system } ] };
-    if ([AppSettings webSearchEnabled] && !imageGenerationModel) payload[@"tools"] = @[@{ @"google_search": @{} }];
-    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-
-    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]
-                                                           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
-                                                       timeoutInterval:timeout];
-    request.HTTPMethod = @"POST";
-    request.HTTPBody = body;
-    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [request setValue:self.useStreaming ? @"text/event-stream" : @"application/json" forHTTPHeaderField:@"Accept"];
-    if (self.useStreaming) {
-        [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
+    if (self.system.length > 0) {
+        payload[@"systemInstruction"] = @{ @"parts": @[ @{ @"text": self.system } ] };
     }
-    [request setValue:self.key forHTTPHeaderField:@"x-goog-api-key"];
+    if ([AppSettings webSearchEnabled] && !imageGenerationModel) {
+        payload[@"tools"] = @[@{ @"google_search": @{} }];
+    }
 
-    self.savedRequest = request;
-    [self executeForcedRequest:request];
+    NSJSONWritingOptions opts = 0;
+    if (@available(iOS 13.0, *)) {
+        opts = NSJSONWritingWithoutEscapingSlashes;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        GeminiStream *bgMe = weakSelf;
+        if (!bgMe || bgMe.cancelled || bgMe.finished) return;
+        NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:opts error:nil];
+        if (!body) body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            GeminiStream *mainMe = weakSelf;
+            if (!mainMe || mainMe.cancelled || mainMe.finished) return;
+            NSMutableURLRequest *request = [mainMe buildRequestWithBody:body];
+            mainMe.savedRequest = request;
+            [mainMe executeForcedRequest:request];
+        });
+    });
 }
 
 - (void)executeForcedRequest:(NSMutableURLRequest *)request {
@@ -160,19 +205,22 @@
     self.task = nil;
 
     [self.buffer setLength:0];
+    self.bufferReadOffset = 0;
     [self.errorBody setLength:0];
     self.status = 0;
     self.gotText = NO;
+    self.hitMaxTokens = NO;
     self.inStreamErrorStatus = 0;
     self.inStreamErrorMessage = nil;
     self.blockReason = nil;
     self.inputTokenUsage = 0;
     self.outputTokenUsage = 0;
 
-    NSTimeInterval timeout = self.useFastSpeed ? (self.useStreaming ? 90 : 120) : (self.useStreaming ? 180 : 240);
+    NSTimeInterval timeout = [self effectiveTimeout];
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.timeoutIntervalForRequest = timeout;
-    config.timeoutIntervalForResource = 3600;
+    config.timeoutIntervalForResource = 7200;
+    config.HTTPMaximumConnectionsPerHost = 6;
     self.session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:[NSOperationQueue mainQueue]];
     self.task = [self.session dataTaskWithRequest:request];
     [self.task resume];
@@ -260,12 +308,13 @@ didReceiveResponse:(NSURLResponse *)response
         if (self.onUsage && (self.inputTokenUsage > 0 || self.outputTokenUsage > 0)) {
             self.onUsage(self.inputTokenUsage, self.outputTokenUsage);
         }
+        NSString *okDetail = self.hitMaxTokens ? @"__OUTPUT_LIMIT_REACHED__" : nil;
         void (^finish)(GeminiStreamError, NSInteger, NSString *) = self.onFinish;
         self.onDelta = nil;
         self.onImage = nil;
         self.onUsage = nil;
         self.onFinish = nil;
-        if (finish) finish(GeminiStreamErrorNone, self.status, nil);
+        if (finish) finish(GeminiStreamErrorNone, self.status, okDetail);
         return;
     }
 
@@ -283,14 +332,14 @@ didReceiveResponse:(NSURLResponse *)response
         return;
     }
 
-    // Chỉ retry tự động khi chưa nhận được chữ (`!self.gotText`) để tránh lặp lại đoạn đã stream
-    NSInteger maxRetries = self.useFastSpeed ? 8 : 12;
-    double maxBackoff = self.useFastSpeed ? 6.0 : 12.0;
+    // Ép retry mạnh hơn khi chưa có text để vượt quá tải tạm thời / rớt kết nối
+    NSInteger maxRetries = self.useFastSpeed ? 10 : 14;
+    double maxBackoff = self.useFastSpeed ? 5.0 : 10.0;
     if (!self.gotText && (isRateLimitOrOverload || (error != nil && self.status == 0 && error.code != NSURLErrorCancelled))) {
         if (self.sameKeyRetryCount < maxRetries) {
             self.sameKeyRetryCount++;
-            NSTimeInterval backoffDelay = MIN(pow(1.6, self.sameKeyRetryCount), maxBackoff);
-            NSTimeInterval jitter = (double)(arc4random_uniform(500)) / 1000.0;
+            NSTimeInterval backoffDelay = MIN(pow(1.45, self.sameKeyRetryCount), maxBackoff);
+            NSTimeInterval jitter = (double)(arc4random_uniform(350)) / 1000.0;
             NSTimeInterval totalWait = backoffDelay + jitter;
 
             [self.session invalidateAndCancel];
@@ -347,22 +396,55 @@ didReceiveResponse:(NSURLResponse *)response
 
 #pragma mark - SSE parsing
 
-- (void)drainBufferFinal:(BOOL)final {
-    NSData *newline = [NSData dataWithBytes:"\n" length:1];
-    while (YES) {
-        NSRange range = [self.buffer rangeOfData:newline options:0 range:NSMakeRange(0, self.buffer.length)];
-        if (range.location == NSNotFound) break;
-        NSData *lineData = [self.buffer subdataWithRange:NSMakeRange(0, range.location)];
-        [self.buffer replaceBytesInRange:NSMakeRange(0, range.location + 1) withBytes:NULL length:0];
-        [self processLineData:lineData];
+- (void)compactReadBufferIfNeeded:(BOOL)force {
+    if (self.bufferReadOffset == 0) return;
+    if (force || self.bufferReadOffset >= 65536 || self.bufferReadOffset >= self.buffer.length / 2) {
+        NSUInteger remaining = self.buffer.length > self.bufferReadOffset ? (self.buffer.length - self.bufferReadOffset) : 0;
+        if (remaining > 0) {
+            memmove(self.buffer.mutableBytes, (const uint8_t *)self.buffer.bytes + self.bufferReadOffset, remaining);
+        }
+        self.buffer.length = remaining;
+        self.bufferReadOffset = 0;
     }
-    if (final && self.buffer.length > 0) {
-        [self processLineData:[self.buffer copy]];
+}
+
+- (void)drainBufferFinal:(BOOL)final {
+    if (self.buffer.length <= self.bufferReadOffset) {
+        if (final) {
+            self.buffer.length = 0;
+            self.bufferReadOffset = 0;
+        }
+        return;
+    }
+    const uint8_t *bytes = self.buffer.bytes;
+    NSUInteger totalLen = self.buffer.length;
+    NSUInteger pos = self.bufferReadOffset;
+
+    while (pos < totalLen) {
+        const uint8_t *found = memchr(bytes + pos, '\n', totalLen - pos);
+        if (!found) break;
+        NSUInteger lineEnd = (NSUInteger)(found - bytes);
+        NSUInteger lineLen = lineEnd > pos ? (lineEnd - pos) : 0;
+        NSData *lineData = [NSData dataWithBytesNoCopy:(void *)(bytes + pos) length:lineLen freeWhenDone:NO];
+        [self processLineData:lineData];
+        pos = lineEnd + 1;
+    }
+
+    self.bufferReadOffset = pos;
+    if (final && self.bufferReadOffset < self.buffer.length) {
+        NSData *tailData = [NSData dataWithBytesNoCopy:(void *)(bytes + self.bufferReadOffset)
+                                                length:(self.buffer.length - self.bufferReadOffset)
+                                          freeWhenDone:NO];
+        [self processLineData:tailData];
         self.buffer.length = 0;
+        self.bufferReadOffset = 0;
+    } else {
+        [self compactReadBufferIfNeeded:final];
     }
 }
 
 - (void)processLineData:(NSData *)lineData {
+    if (lineData.length < 6) return;
     NSString *line = [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
     if (line == nil) return;
     line = [line stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\r"]];
@@ -371,7 +453,9 @@ didReceiveResponse:(NSURLResponse *)response
     NSString *payload = [[line substringFromIndex:5] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (payload.length == 0 || [payload isEqualToString:@"[DONE]"]) return;
 
-    id json = [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+    NSData *payloadData = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    if (!payloadData) return;
+    id json = [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:nil];
     if (![json isKindOfClass:[NSDictionary class]]) return;
     [self processChunk:json];
 }
@@ -421,6 +505,9 @@ didReceiveResponse:(NSURLResponse *)response
     }
 
     NSString *finishReason = [candidate[@"finishReason"] isKindOfClass:[NSString class]] ? candidate[@"finishReason"] : nil;
+    if ([finishReason isEqualToString:@"MAX_TOKENS"]) {
+        self.hitMaxTokens = YES;
+    }
     if (finishReason.length > 0 && !self.gotText) {
         NSArray *blocking = @[@"SAFETY", @"PROHIBITED_CONTENT", @"BLOCKLIST", @"SPII", @"RECITATION", @"IMAGE_SAFETY"];
         if ([blocking containsObject:finishReason]) self.blockReason = finishReason;
