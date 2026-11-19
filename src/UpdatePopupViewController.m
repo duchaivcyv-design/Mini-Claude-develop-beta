@@ -179,6 +179,7 @@ static NSString *SizeText(long long bytes) {
             secondary = L(@"update_check_again");
             secondaryHandler = ^{ [weakSelf checkAgainTapped]; };
             break;
+        }
         case UpdateStateAvailable: {
             title = L(@"update_available");
             NSMutableString *text = [NSMutableString stringWithFormat:@"%@  →  %@", m.currentVersion, m.latestLabel];
