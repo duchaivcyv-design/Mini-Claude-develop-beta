@@ -1,6 +1,17 @@
 #import "ConversationStore.h"
 #import "AttachmentStore.h"
 
+static const NSUInteger kConvStreamChunkBytes = 1024 * 1024; // 1 MB
+
+static dispatch_queue_t ConvQueue(void) {
+    static dispatch_queue_t queue = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("com.claudemini.conversationstore", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
 static NSString *ChatsDir(void) {
     static NSString *dir = nil;
     static dispatch_once_t once;
@@ -19,28 +30,92 @@ static NSString *IndexPath(void) {
     return [ChatsDir() stringByAppendingPathComponent:@"index.json"];
 }
 
-// Ids become file names, so refuse anything that could escape the folder.
 static BOOL ValidId(id value) {
     if (![value isKindOfClass:[NSString class]]) return NO;
     NSString *cid = value;
-    return cid.length > 0 && [cid rangeOfString:@"/"].location == NSNotFound && [cid rangeOfString:@".."].location == NSNotFound;
+    return cid.length > 0 &&
+           [cid rangeOfString:@"/"].location == NSNotFound &&
+           [cid rangeOfString:@".."].location == NSNotFound;
 }
 
 static NSString *FilePath(NSString *cid) {
     return [ChatsDir() stringByAppendingPathComponent:[cid stringByAppendingString:@".json"]];
 }
 
+static NSData *SerializeJSON(id obj) {
+    if (!obj) return nil;
+    NSJSONWritingOptions opts = 0;
+    if (@available(iOS 13.0, *)) {
+        opts = NSJSONWritingWithoutEscapingSlashes;
+    }
+    NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:opts error:nil];
+    return data ?: [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+}
+
+static BOOL WriteDataToPath(NSData *data, NSString *filePath) {
+    if (!data || !filePath) return NO;
+    if (data.length <= kConvStreamChunkBytes * 4) {
+        return [data writeToFile:filePath options:NSDataWritingAtomic error:nil];
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *tempPath = [filePath stringByAppendingPathExtension:@"tmp"];
+    [fm removeItemAtPath:tempPath error:nil];
+    if (![fm createFileAtPath:tempPath contents:nil attributes:nil]) return NO;
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:tempPath];
+    if (!handle) {
+        [fm removeItemAtPath:tempPath error:nil];
+        return NO;
+    }
+
+    @try {
+        NSUInteger offset = 0;
+        while (offset < data.length) {
+            @autoreleasepool {
+                NSUInteger len = MIN(kConvStreamChunkBytes, data.length - offset);
+                NSData *chunk = [NSData dataWithBytesNoCopy:(void *)((const uint8_t *)data.bytes + offset)
+                                                     length:len
+                                               freeWhenDone:NO];
+                [handle writeData:chunk];
+                offset += len;
+            }
+        }
+        [handle synchronizeFile];
+        [handle closeFile];
+        handle = nil;
+
+        [fm removeItemAtPath:filePath error:nil];
+        return [fm moveItemAtPath:tempPath toPath:filePath error:nil];
+    } @catch (__unused NSException *ex) {
+        [handle closeFile];
+        [fm removeItemAtPath:tempPath error:nil];
+        return NO;
+    }
+}
+
 @implementation ConversationStore
 
 #pragma mark - Index
 
-// The index is read by every screen that lists chats: keep it in memory (this app is the only writer).
 static NSArray *gIndexCache;
 
++ (NSArray *)sortedEntries:(NSArray *)entries {
+    if (![entries isKindOfClass:[NSArray class]]) return @[];
+    return [entries sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        double ua = [a[@"updated"] doubleValue], ub = [b[@"updated"] doubleValue];
+        if (ua == ub) return NSOrderedSame;
+        return ua > ub ? NSOrderedAscending : NSOrderedDescending;
+    }];
+}
+
 + (void)writeIndex:(NSArray *)entries {
-    @synchronized (self) { gIndexCache = [entries copy]; }
-    NSData *data = [NSJSONSerialization dataWithJSONObject:entries options:0 error:nil];
-    if (data) [data writeToFile:IndexPath() options:NSDataWritingAtomic error:nil];
+    NSArray *sorted = [self sortedEntries:entries];
+    @synchronized (self) { gIndexCache = [sorted copy]; }
+    NSData *data = SerializeJSON(sorted);
+    if (data) {
+        [data writeToFile:IndexPath() options:NSDataWritingAtomic error:nil];
+    }
 }
 
 + (NSArray *)rebuildIndex {
@@ -55,8 +130,9 @@ static NSArray *gIndexCache;
                               @"title": conv[@"title"] ?: @"",
                               @"updated": conv[@"updated"] ?: @0 }];
     }
-    if (entries.count > 0) [self writeIndex:entries];
-    return entries;
+    NSArray *sorted = [self sortedEntries:entries];
+    [self writeIndex:sorted];
+    return sorted;
 }
 
 + (NSArray *)rawIndex {
@@ -71,19 +147,17 @@ static NSArray *gIndexCache;
     if (data.length == 0) return [self rebuildIndex];
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     if (![obj isKindOfClass:[NSArray class]]) return [self rebuildIndex];
-    NSMutableArray *out = [NSMutableArray array];
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:[(NSArray *)obj count]];
     for (id entry in (NSArray *)obj) {
-        if ([entry isKindOfClass:[NSDictionary class]] && ValidId(entry[@"id"])) [out addObject:entry];
+        if ([entry isKindOfClass:[NSDictionary class]] && ValidId(entry[@"id"])) {
+            [out addObject:entry];
+        }
     }
-    return out;
+    return [self sortedEntries:out];
 }
 
 + (NSArray *)allEntries {
-    return [[self rawIndex] sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-        double ua = [a[@"updated"] doubleValue], ub = [b[@"updated"] doubleValue];
-        if (ua == ub) return NSOrderedSame;
-        return ua > ub ? NSOrderedAscending : NSOrderedDescending;   // newest first
-    }];
+    return [self sortedEntries:[self rawIndex]];
 }
 
 #pragma mark - Conversations
@@ -101,23 +175,31 @@ static NSArray *gIndexCache;
 
 + (NSMutableDictionary *)loadConversationWithId:(NSString *)cid {
     if (!ValidId(cid)) return nil;
-    NSData *data = [NSData dataWithContentsOfFile:FilePath(cid)];
+    NSString *path = FilePath(cid);
+    NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
     if (data.length == 0) return nil;
     id obj = [NSJSONSerialization JSONObjectWithData:data
                                              options:NSJSONReadingMutableContainers | NSJSONReadingMutableLeaves
                                                error:nil];
     if (![obj isKindOfClass:[NSMutableDictionary class]]) return nil;
     NSMutableDictionary *conv = obj;
-    if (![conv[@"messages"] isKindOfClass:[NSMutableArray class]]) conv[@"messages"] = [NSMutableArray array];
+    if (![conv[@"messages"] isKindOfClass:[NSMutableArray class]]) {
+        conv[@"messages"] = [NSMutableArray array];
+    }
     return conv;
 }
 
 + (void)saveConversation:(NSDictionary *)conv {
     NSString *cid = conv[@"id"];
     if (!ValidId(cid)) return;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:conv options:0 error:nil];
+    NSData *data = SerializeJSON(conv);
     if (!data) return;
-    [data writeToFile:FilePath(cid) options:NSDataWritingAtomic error:nil];
+
+    __block BOOL wrote = NO;
+    dispatch_sync(ConvQueue(), ^{
+        wrote = WriteDataToPath(data, FilePath(cid));
+    });
+    if (!wrote) return;
 
     NSMutableArray *entries = [[self rawIndex] mutableCopy];
     for (NSInteger i = (NSInteger)entries.count - 1; i >= 0; i--) {
@@ -131,8 +213,11 @@ static NSArray *gIndexCache;
 
 + (void)deleteConversationWithId:(NSString *)cid {
     if (!ValidId(cid)) return;
-    [[NSFileManager defaultManager] removeItemAtPath:FilePath(cid) error:nil];
+    dispatch_sync(ConvQueue(), ^{
+        [[NSFileManager defaultManager] removeItemAtPath:FilePath(cid) error:nil];
+    });
     [AttachmentStore deleteDirectoryForConversation:cid];
+
     NSMutableArray *entries = [[self rawIndex] mutableCopy];
     for (NSInteger i = (NSInteger)entries.count - 1; i >= 0; i--) {
         if ([entries[i][@"id"] isEqualToString:cid]) [entries removeObjectAtIndex:i];
@@ -150,10 +235,12 @@ static NSArray *gIndexCache;
 
 + (void)deleteAll {
     @synchronized (self) { gIndexCache = nil; }
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *file in [fm contentsOfDirectoryAtPath:ChatsDir() error:nil]) {
-        [fm removeItemAtPath:[ChatsDir() stringByAppendingPathComponent:file] error:nil];
-    }
+    dispatch_sync(ConvQueue(), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *file in [fm contentsOfDirectoryAtPath:ChatsDir() error:nil]) {
+            [fm removeItemAtPath:[ChatsDir() stringByAppendingPathComponent:file] error:nil];
+        }
+    });
     [AttachmentStore deleteAll];
 }
 
@@ -170,7 +257,9 @@ static NSArray *gIndexCache;
             continue;
         }
         NSDictionary *conv = [self loadConversationWithId:entry[@"id"]];
-        for (NSDictionary *message in conv[@"messages"]) {
+        NSArray *messages = [conv[@"messages"] isKindOfClass:[NSArray class]] ? conv[@"messages"] : @[];
+        for (NSDictionary *message in messages) {
+            if (![message isKindOfClass:[NSDictionary class]]) continue;
             NSString *text = message[@"text"];
             if ([text isKindOfClass:[NSString class]] && [text rangeOfString:q options:opts].location != NSNotFound) {
                 [matches addObject:entry];
