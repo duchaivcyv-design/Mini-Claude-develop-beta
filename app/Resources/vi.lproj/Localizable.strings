@@ -225,6 +225,6 @@
 "font_claude_note" = "Chữ có chân cho tiêu đề và câu trả lời, giống phong cách Claude";
 "font_system" = "Font hệ thống";
 "font_system_note" = "San Francisco, chữ không chân của iOS";
-"main_developer" = "Main developer";
+"main_developer" = "Nhà phát triển chính";
 "search_chip_title" = "Tìm kiếm";
 "fast_boost_title" = "Tăng tốc ×10";
