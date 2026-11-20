@@ -378,7 +378,7 @@ static UIImage *DrawChevronRightIconImage(CGFloat size, UIColor *color) {
 @property (strong, nonatomic) WKWebView *webView;
 @property (assign, nonatomic) BOOL webReady;
 @property (copy, nonatomic) NSString *lastWebError;
-
+@property (nonatomic, strong) dispatch_queue_t jsSerializationQueue;
 @property (assign, nonatomic) BOOL historyDrawerOpen;
 @property (strong, nonatomic) UIView *historyDrawerView;
 @property (strong, nonatomic) UIView *historySearchWrap;
@@ -467,6 +467,11 @@ static UIImage *DrawChevronRightIconImage(CGFloat size, UIColor *color) {
     self.chatIsEmpty = YES;
     self.view.clipsToBounds = YES;
     self.greetingIndex = arc4random_uniform((uint32_t)kGreetingCount);
+    self.jsSerializationQueue = dispatch_queue_create("com.app.chat.jsserialization", DISPATCH_QUEUE_SERIAL);
+    // --- BẮT ĐẦU PHẦN THÊM VÀO ĐỂ FIX TREO STREAM ---
+    self.streamBuffer = [NSMutableData data];
+    self.parsingQueue = dispatch_queue_create("com.app.gemini.parsing", DISPATCH_QUEUE_SERIAL);
+    // --- KẾT THÚC PHẦN THÊM VÀO ---
 
     self.chatStageView = [[UIView alloc] initWithFrame:self.view.bounds];
     self.chatStageView.backgroundColor = [Theme background];
@@ -1474,7 +1479,8 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     if (self.deltaFlushTimer) return;
     self.pendingJSDelta = [NSMutableString string];
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_MSEC), 12 * NSEC_PER_MSEC, 3 * NSEC_PER_MSEC);
+    // Tăng lên 50ms để giảm tải cho Main Thread, vẫn đủ mượt
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), 50 * NSEC_PER_MSEC, 10 * NSEC_PER_MSEC);
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(timer, ^{
         [weakSelf flushPendingJSDelta];
@@ -1487,8 +1493,30 @@ static const CGFloat kDrawerWidthRatio = 0.62;
     if (self.pendingJSDelta.length == 0) return;
     NSString *chunk = [self.pendingJSDelta copy];
     [self.pendingJSDelta setString:@""];
-    [self callJS:@"delta" args:@[chunk]];
-}
+
+    // Đẩy việc xử lý chuỗi sang Background Queue để không làm nghẽn Main Thread
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(self.jsSerializationQueue, ^{
+        NSData *data = nil;
+        @try {
+            data = [NSJSONSerialization dataWithJSONObject:@[chunk] options:0 error:nil];
+        } @catch (NSException *exception) {
+            [DiagnosticLog log:@"flushPendingJSDelta skipped: %@", exception.reason];
+            return;
+        }
+        if (!data) return;
+        
+        NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        json = [json stringByReplacingOccurrencesOfString:@"\u2028" withString:@"\\u2028"];
+        json = [json stringByReplacingOccurrencesOfString:@"\u2029" withString:@"\\u2029"];
+        NSString *script = [NSString stringWithFormat:@"ChatUI.delta.apply(null,%@);", json];
+
+        // Quay lại Main Thread để thực thi JS trên WebView
+        dispatch_async(dispatch_get_main_queue(), ^{
+            ChatViewController *strongSelf = weakSelf;
+            if (strongSelf && strongSelf.webReady) {
+                [strongSelf.webView evaluateJavaScript:script completionHandler:nil];
+            }
 
 - (void)stopDeltaFlushTimer {
     [self flushPendingJSDelta];
